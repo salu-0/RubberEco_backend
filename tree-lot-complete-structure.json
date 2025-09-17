@@ -1,0 +1,59 @@
+{
+  "_id": "ObjectId('68bfbe8ca708ba27406c9fe0')",
+  "lotId": "RT001",
+  "farmerId": "ObjectId('68978a74b25679ccd28e21ae')",
+  "location": "kottayam",
+  "coordinates": {
+    "latitude": 9.5833,
+    "longitude": 76.5167
+  },
+  "numberOfTrees": 170,
+  "approximateYield": "3kg",
+  "minimumPrice": 150000,
+  "description": "Well-maintained rubber plantation with good soil quality and proper irrigation facilities. The trees are healthy and regularly maintained.",
+  "images": [
+    "https://example.com/tree-lot-image-1.jpg",
+    "https://example.com/tree-lot-image-2.jpg"
+  ],
+  "biddingStartDate": "2025-01-09T00:00:00.000Z",
+  "biddingEndDate": "2025-10-30T00:00:00.000Z",
+  "status": "active",
+  "treeAge": 12,
+  "tappingSchedule": "Alternate days",
+  "accessibility": {
+    "roadAccess": true,
+    "truckAccess": true,
+    "description": "Good road access available. Trucks can easily reach the plantation. Main road is 500m away."
+  },
+  "soilType": "Red laterite soil",
+  "rainfall": "Annual rainfall of 2500mm",
+  "previousYield": [
+    {
+      "year": 2023,
+      "yield": "2.8kg per tree",
+      "notes": "Good yield despite weather challenges"
+    },
+    {
+      "year": 2024,
+      "yield": "3.2kg per tree",
+      "notes": "Excellent yield with improved tapping techniques"
+    }
+  ],
+  "certifications": [
+    "Organic certification",
+    "ISO 22000",
+    "Fair Trade certified"
+  ],
+  "additionalInfo": "This plantation has been in the family for over 20 years. We use sustainable farming practices and have a dedicated team for maintenance. The plantation is located in a prime area with excellent connectivity and infrastructure.",
+  "viewCount": 0,
+  "featured": false,
+  "tags": [
+    "organic",
+    "sustainable",
+    "well-maintained",
+    "good-access",
+    "family-owned"
+  ],
+  "createdAt": "2025-01-09T04:49:38.543Z",
+  "updatedAt": "2025-01-09T04:49:38.543Z"
+}
