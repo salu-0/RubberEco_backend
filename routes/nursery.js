@@ -6,6 +6,8 @@ const PDFDocument = require('pdfkit');
 const NurseryPlant = require('../models/NurseryPlant');
 const NurseryBooking = require('../models/NurseryBooking');
 const NurseryCenter = require('../models/NurseryCenter');
+const Payment = require('../models/Payment');
+const Shipment = require('../models/Shipment');
 const User = require('../models/User');
 const { protect } = require('../middlewares/auth');
 const { sendNurseryBookingApprovalEmail } = require('../utils/emailService');
@@ -74,6 +76,52 @@ router.get('/centers', async (req, res) => {
     res.json({ success: true, data: centers });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to load centers', error: err.message });
+  }
+});
+
+// Server-side geocoding proxy to avoid client-side CORS issues
+router.get('/geocode', async (req, res) => {
+  try {
+    const q = String(req.query.query || '').trim();
+    if (!q) return res.status(400).json({ success: false, message: 'query is required' });
+    const googleKey = process.env.GOOGLE_MAPS_API_KEY || '';
+    let coords = null;
+
+    if (googleKey) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${googleKey}`;
+        const gRes = await fetch(gUrl);
+        const gData = await gRes.json();
+        if (gData.status === 'OK' && gData.results && gData.results[0]) {
+          const loc = gData.results[0].geometry.location;
+          coords = { lat: loc.lat, lng: loc.lng, provider: 'google' };
+        }
+      } catch (_) {}
+    }
+
+    if (!coords) {
+      try {
+        const nUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`;
+        const nRes = await fetch(nUrl, { headers: { 'Accept': 'application/json', 'User-Agent': 'RubberEco/1.0 (contact@rubbereco.local)' } });
+        if (!nRes.ok) throw new Error(`Nominatim error: ${nRes.status}`);
+        const nData = await nRes.json();
+        if (Array.isArray(nData) && nData.length > 0) {
+          const item = nData[0];
+          const lat = parseFloat(item.lat);
+          const lon = parseFloat(item.lon);
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            coords = { lat, lng: lon, provider: 'nominatim' };
+          }
+        }
+      } catch (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+    }
+
+    if (!coords) return res.json({ success: false, message: 'Location not found' });
+    res.json({ success: true, data: coords });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -319,6 +367,89 @@ router.put('/plants/:id', protect, async (req, res) => {
   }
 });
 
+// Delete plant (admin)
+router.delete('/plants/:id', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin only' });
+    const deleted = await NurseryPlant.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: 'Plant not found' });
+    res.json({ success: true, data: { _id: deleted._id } });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// Clone plant into another center (admin)
+router.post('/plants/clone', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin only' });
+    const { sourcePlantId, targetNurseryCenterId, overrides } = req.body || {};
+    if (!sourcePlantId || !targetNurseryCenterId) {
+      return res.status(400).json({ success: false, message: 'sourcePlantId and targetNurseryCenterId are required' });
+    }
+
+    const source = await NurseryPlant.findById(sourcePlantId);
+    if (!source) return res.status(404).json({ success: false, message: 'Source plant not found' });
+
+    const targetCenter = await NurseryCenter.findById(targetNurseryCenterId);
+    if (!targetCenter || !targetCenter.isActive) {
+      return res.status(400).json({ success: false, message: 'Invalid target nursery center' });
+    }
+
+    const resolvedName = source.name || source.variety || source.clone || 'Rubber Plant';
+    const payload = {
+      name: resolvedName,
+      variety: source.variety,
+      clone: source.clone,
+      origin: source.origin,
+      features: source.features,
+      bestFor: source.bestFor,
+      description: source.description,
+      unitPrice: source.unitPrice,
+      stockAvailable: source.stockAvailable,
+      minOrderQty: source.minOrderQty,
+      imageUrl: source.imageUrl,
+      nurseryCenterId: targetNurseryCenterId,
+      isActive: true,
+      ...(overrides || {})
+    };
+
+    const created = await NurseryPlant.create(payload);
+    const populated = await NurseryPlant.findById(created._id)
+      .populate('nurseryCenterId', 'name email location contact');
+    res.status(201).json({ success: true, data: populated });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// Reassign a plant to a different nursery center (admin)
+router.put('/plants/:id/reassign-center', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin only' });
+    const { nurseryCenterId } = req.body || {};
+    if (!nurseryCenterId) return res.status(400).json({ success: false, message: 'nurseryCenterId is required' });
+
+    const targetCenter = await NurseryCenter.findById(nurseryCenterId);
+    if (!targetCenter || !targetCenter.isActive) {
+      return res.status(400).json({ success: false, message: 'Invalid nursery center' });
+    }
+
+    const updated = await NurseryPlant.findByIdAndUpdate(
+      req.params.id,
+      { nurseryCenterId },
+      { new: true }
+    ).populate('nurseryCenterId', 'name email location contact');
+    if (!updated) return res.status(404).json({ success: false, message: 'Plant not found' });
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // Bulk set default price for plants missing price (admin)
 router.post('/plants/bulk-set-default-price', protect, async (req, res) => {
   try {
@@ -336,7 +467,7 @@ router.post('/plants/bulk-set-default-price', protect, async (req, res) => {
 // Create advance booking (farmer)
 router.post('/bookings', protect, async (req, res) => {
   try {
-    const { plantId, quantity, advancePercent, nurseryCenterId } = req.body;
+    const { plantId, quantity, advancePercent, nurseryCenterId, shipmentRequired, shippingFee, shippingAddressText } = req.body;
     const farmer = await User.findById(req.user.id);
     const plant = await NurseryPlant.findById(plantId);
     if (!plant || !plant.isActive) return res.status(404).json({ success: false, message: 'Plant not found' });
@@ -375,7 +506,10 @@ router.post('/bookings', protect, async (req, res) => {
       advancePercent: advancePct,
       amountAdvance,
       amountBalance,
-      status: 'pending'
+      status: 'pending',
+      shipmentRequired: Boolean(shipmentRequired),
+      shippingFee: Number(shippingFee || 0),
+      shippingAddressText: String(shippingAddressText || '')
     });
 
     res.status(201).json({ success: true, data: booking });
@@ -420,6 +554,47 @@ router.post('/bookings/:id/create-advance-order', protect, async (req, res) => {
   }
 });
 
+// Create Razorpay order for full payment (optionally including shipping fee)
+router.post('/bookings/:id/create-full-order', protect, async (req, res) => {
+  try {
+    const booking = await NurseryBooking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
+    if (booking.farmerId.toString() !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not allowed' });
+    }
+
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({ success: false, message: 'Razorpay keys not configured' });
+    }
+
+    const shippingFee = Number(req.body.shippingFee || 0);
+    const grandTotal = Math.max(0, Number(booking.amountTotal || 0) + (Number.isFinite(shippingFee) ? shippingFee : 0));
+
+    const razorpay = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+
+    const options = {
+      amount: Math.max(1, Math.round(grandTotal * 100)),
+      currency: 'INR',
+      receipt: `nursery-full-${booking._id}`,
+      notes: {
+        bookingId: String(booking._id),
+        plantName: booking.plantName,
+        farmerName: booking.farmerName,
+        paymentType: 'full',
+        shippingFee: String(shippingFee || 0)
+      }
+    };
+    const order = await razorpay.orders.create(options);
+
+    booking.payment.advanceOrderId = order.id; // reuse field to store order id
+    await booking.save();
+
+    res.json({ success: true, data: { orderId: order.id, amount: order.amount, currency: order.currency, key: process.env.RAZORPAY_KEY_ID } });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // Verify Razorpay payment signature and mark advance paid
 router.post('/bookings/:id/verify-advance', protect, async (req, res) => {
   try {
@@ -448,7 +623,118 @@ router.post('/bookings/:id/verify-advance', protect, async (req, res) => {
     booking.payment.advanceTxnId = razorpay_payment_id;
     booking.payment.advancePaymentId = razorpay_payment_id;
     booking.payment.advanceSignature = razorpay_signature;
+
+    const isFullPayment = Number(booking.advancePercent) === 100;
+
+    // If this was a full payment (treated as 100% advance in UI),
+    // immediately decrement stock and mark booking completed
+    if (isFullPayment) {
+      const updatedPlant = await NurseryPlant.findOneAndUpdate(
+        { _id: booking.plantId, stockAvailable: { $gte: booking.quantity } },
+        { $inc: { stockAvailable: -booking.quantity } },
+        { new: true }
+      );
+      if (!updatedPlant) {
+        return res.status(400).json({ success: false, message: 'Insufficient stock to complete purchase' });
+      }
+      booking.status = 'completed';
+
+      // Auto-create shipment if requested
+      try {
+        if (booking.shipmentRequired) {
+          const center = await NurseryCenter.findById(booking.nurseryCenterId);
+          const farmerUser = await User.findById(booking.farmerId).catch(() => null);
+          const shippingAddressText = (booking.shippingAddressText || '').trim();
+          const cityFromText = (text) => {
+            try {
+              const parts = String(text).split(',').map(s => s.trim());
+              return parts[0] || '';
+            } catch (_) { return ''; }
+          };
+          const centerCity = center && typeof center.location === 'string' ? cityFromText(center.location) : '';
+          const shippingAddress = {
+            street: shippingAddressText || 'Drop-off location',
+            city: cityFromText(shippingAddressText) || centerCity || 'Unknown',
+            state: 'Kerala',
+            pincode: '000000',
+            landmark: ''
+          };
+          const est = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+          const shipment = new Shipment({
+            bookingId: booking._id,
+            nurseryCenterId: booking.nurseryCenterId,
+            farmerId: booking.farmerId,
+            farmerName: booking.farmerName,
+            farmerEmail: booking.farmerEmail,
+            farmerPhone: (farmerUser && farmerUser.phone) ? farmerUser.phone : 'NA',
+            shippingAddress,
+            plantDetails: {
+              plantId: booking.plantId,
+              plantName: booking.plantName,
+              quantity: booking.quantity,
+              unitPrice: booking.unitPrice
+            },
+            shipmentDetails: {
+              carrier: 'Local Transport',
+              estimatedDelivery: est,
+              shippingCost: Number(booking.shippingFee || 0),
+              packagingType: 'Standard'
+            },
+            status: 'preparing',
+            statusHistory: [{ status: 'preparing', notes: 'Auto-created after purchase', updatedBy: 'system' }]
+          });
+          await shipment.save();
+        }
+      } catch (shipErr) {
+        // Log and continue
+        console.error('Auto-shipment creation failed:', shipErr.message);
+      }
+    }
+
     await booking.save();
+
+    // Record payment in payments collection
+    try {
+      // Compute effective paid amount
+      const center = await NurseryCenter.findById(booking.nurseryCenterId).catch(() => null);
+      const centerCity = center && typeof center.location === 'string' ? center.location.split(',')[0].trim() : '';
+      const paidAmount = isFullPayment ? Number(booking.amountTotal || 0) + Number(booking.shippingFee || 0) : Number(booking.amountAdvance || 0);
+      const destCity = (booking.shippingAddressText || '').split(',')[0].trim();
+
+      const paymentDoc = await Payment.create({
+        bookingId: booking._id,
+        nurseryCenterId: booking.nurseryCenterId,
+        nurseryCenterName: center ? center.name : undefined,
+        farmerId: booking.farmerId,
+        farmerName: booking.farmerName,
+        farmerEmail: booking.farmerEmail,
+        paymentType: isFullPayment ? 'full' : 'advance',
+        amount: paidAmount,
+        currency: 'INR',
+        paymentMethod: 'card',
+        paymentStatus: 'completed',
+        paymentGateway: 'razorpay',
+        gatewayDetails: {
+          transactionId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          paymentId: razorpay_payment_id,
+          signature: razorpay_signature
+        },
+        paymentTimeline: [{ status: 'completed', amount: isFullPayment ? Number(booking.amountTotal || 0) : Number(booking.amountAdvance || 0) }],
+        invoiceDetails: { totalAmount: paidAmount },
+        shipmentRequired: Boolean(booking.shipmentRequired),
+        shippingFee: Number(booking.shippingFee || 0),
+        shippingAddressText: booking.shippingAddressText || undefined,
+        route: { from: centerCity || undefined, to: destCity || undefined },
+        notes: isFullPayment ? 'Full payment collected via Razorpay' : 'Advance payment collected via Razorpay',
+        processedBy: 'system'
+      });
+      // Attach paymentId for reference (optional)
+      booking.payment.lastPaymentRecordId = paymentDoc._id;
+      await booking.save();
+    } catch (_) {
+      // Do not fail the response if payment recording fails
+    }
 
     res.json({ success: true, data: booking });
   } catch (err) {
@@ -490,6 +776,7 @@ router.get('/bookings/:id/receipt', protect, async (req, res) => {
 
     doc.fontSize(12).text('Booking Details', { underline: true });
     doc.text(`Plant: ${booking.plantName}`);
+    doc.text(`Nursery Center: ${booking.nurseryCenterName || '-'}`);
     doc.text(`Quantity: ${booking.quantity}`);
     doc.text(`Unit Price: ₹${booking.unitPrice.toLocaleString()}`);
     doc.text(`Advance %: ${booking.advancePercent}%`);

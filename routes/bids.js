@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const Bid = require('../models/Bid');
 const TreeLot = require('../models/TreeLot');
+const BidAlert = require('../models/BidAlert');
 const { protect, authorize } = require('../middlewares/auth');
+const { sendOutbidNotificationEmail } = require('../utils/emailService');
 
 // @route   POST /api/bids
 // @desc    Place a new bid
@@ -61,10 +63,25 @@ router.post('/', protect, async (req, res) => {
 
     if (existingBid) {
       // Update existing bid
+      const beforeSaveHighest = await Bid.findOne({ lotId, status: 'active' }).sort({ amount: -1 });
+
       existingBid.amount = amount;
       existingBid.comment = comment || '';
       existingBid.updatedAt = new Date();
       await existingBid.save();
+
+      // If this update becomes highest, notify previous highest bidder
+      const afterSaveHighest = await Bid.findOne({ lotId, status: 'active' }).sort({ amount: -1 });
+      if (afterSaveHighest && beforeSaveHighest && String(afterSaveHighest._id) !== String(beforeSaveHighest._id)) {
+        if (String(beforeSaveHighest.bidderId) !== String(req.user.id)) {
+          sendOutbidNotificationEmail({
+            lotId,
+            previousBidderId: beforeSaveHighest.bidderId,
+            previousAmount: beforeSaveHighest.amount,
+            newAmount: afterSaveHighest.amount
+          });
+        }
+      }
 
       res.json({
         success: true,
@@ -81,7 +98,22 @@ router.post('/', protect, async (req, res) => {
         status: 'active'
       });
 
+      const beforeSaveHighest = await Bid.findOne({ lotId, status: 'active' }).sort({ amount: -1 });
+
       await newBid.save();
+
+      // If this new bid becomes highest, notify previous highest bidder
+      const afterSaveHighest = await Bid.findOne({ lotId, status: 'active' }).sort({ amount: -1 });
+      if (afterSaveHighest && beforeSaveHighest && String(afterSaveHighest._id) !== String(beforeSaveHighest._id)) {
+        if (String(beforeSaveHighest.bidderId) !== String(req.user.id)) {
+          sendOutbidNotificationEmail({
+            lotId,
+            previousBidderId: beforeSaveHighest.bidderId,
+            previousAmount: beforeSaveHighest.amount,
+            newAmount: afterSaveHighest.amount
+          });
+        }
+      }
 
       res.status(201).json({
         success: true,
@@ -371,6 +403,33 @@ router.get('/history', protect, async (req, res) => {
   }
 });
 
+// @route   POST /api/bids/:lotId/alerts
+// @desc    Create an alert for a broker to be notified 1 day before bidding ends
+// @access  Private (Broker only)
+router.post('/:lotId/alerts', protect, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+
+    // Validate lot exists
+    const treeLot = await TreeLot.findOne({ lotId });
+    if (!treeLot) {
+      return res.status(404).json({ success: false, message: 'Tree lot not found' });
+    }
+
+    // Upsert alert so duplicate clicks are idempotent
+    const alert = await BidAlert.findOneAndUpdate(
+      { lotId, bidderId: req.user.id, type: 'ending_soon' },
+      { $setOnInsert: { notified: false } },
+      { new: true, upsert: true }
+    );
+
+    return res.status(201).json({ success: true, data: alert });
+  } catch (error) {
+    console.error('Error creating bid alert:', error);
+    res.status(500).json({ success: false, message: 'Server error while creating alert' });
+  }
+});
+
 // @route   PUT /api/bids/:id
 // @desc    Update a bid
 // @access  Private (Broker only)
@@ -423,6 +482,8 @@ router.put('/:id', protect, async (req, res) => {
         });
       }
 
+      const beforeSaveHighest = await Bid.findOne({ lotId: bid.lotId, status: 'active' }).sort({ amount: -1 });
+
       bid.amount = amount;
     }
 
@@ -432,6 +493,21 @@ router.put('/:id', protect, async (req, res) => {
 
     bid.updatedAt = new Date();
     await bid.save();
+
+    // After update, if this bid became highest, notify previous highest bidder
+    const afterSaveHighest = await Bid.findOne({ lotId: bid.lotId, status: 'active' }).sort({ amount: -1 });
+    if (afterSaveHighest && afterSaveHighest._id.equals(bid._id)) {
+      // Find previous highest excluding this bid
+      const previousHighest = await Bid.findOne({ lotId: bid.lotId, status: 'active', _id: { $ne: bid._id } }).sort({ amount: -1 });
+      if (previousHighest && String(previousHighest.bidderId) !== String(req.user.id)) {
+        sendOutbidNotificationEmail({
+          lotId: bid.lotId,
+          previousBidderId: previousHighest.bidderId,
+          previousAmount: previousHighest.amount,
+          newAmount: bid.amount
+        });
+      }
+    }
 
     res.json({
       success: true,

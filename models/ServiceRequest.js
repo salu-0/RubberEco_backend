@@ -181,7 +181,9 @@ const serviceRequestSchema = new mongoose.Schema({
     }
   }]
 }, {
-  timestamps: true
+  timestamps: true,
+  // Explicitly set collection to match existing Mongo collection name
+  collection: 'serviceRequests'
 });
 
 // Generate unique request ID

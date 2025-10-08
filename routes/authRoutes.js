@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const { preventNurseryAdminAccess } = require('../middlewares/nurseryAdminAuth');
+const upload = require('../middlewares/brokerUpload');
+const { ocrIdProofAndValidate } = require('../utils/ocr');
+const fs = require('fs');
 // const passport = require('passport'); // Temporarily disabled for debugging
 const {
   registerUser,
@@ -18,25 +22,25 @@ const {
 } = require('../controllers/authController');
 
 // POST /api/auth/register
-router.post('/register', registerUser);
+router.post('/register', preventNurseryAdminAccess, registerUser);
 
 // POST /api/auth/login
-router.post('/login', loginUser);
+router.post('/login', preventNurseryAdminAccess, loginUser);
 
 // POST /api/auth/forgot-password
-router.post('/forgot-password', forgotPassword);
+router.post('/forgot-password', preventNurseryAdminAccess, forgotPassword);
 
 // POST /api/auth/reset-password
-router.post('/reset-password', resetPassword);
+router.post('/reset-password', preventNurseryAdminAccess, resetPassword);
 
 // GET /api/auth/verify-email
-router.get('/verify-email', verifyEmail);
+router.get('/verify-email', preventNurseryAdminAccess, verifyEmail);
 
 // POST /api/auth/resend-verification
-router.post('/resend-verification', resendVerificationEmail);
+router.post('/resend-verification', preventNurseryAdminAccess, resendVerificationEmail);
 
 // GET /api/auth/check-user
-router.get('/check-user', checkUserExists);
+router.get('/check-user', preventNurseryAdminAccess, checkUserExists);
 
 
 
@@ -63,39 +67,37 @@ router.get('/google/api', handleGoogleAuth, googleAuthCallback);
 // @route   POST /api/auth/register-broker
 // @desc    Register a new broker
 // @access  Public
-router.post('/register-broker', async (req, res) => {
+router.post('/register-broker', preventNurseryAdminAccess, upload.single('idProof'), async (req, res) => {
   try {
-    console.log('Received broker registration request:', req.body);
-    const {
-      name,
-      email,
-      password,
-      phone,
-      location,
-      bio,
-      brokerProfile
-    } = req.body;
+    // Accept both form-data and JSON fallback
+    const isMultipart = req.is('multipart/form-data');
+    let name, email, password, phone, location, bio, experience, companyName, dob;
+    if (isMultipart) {
+      name = req.body.name;
+      email = req.body.email;
+      password = req.body.password;
+      phone = req.body.phone;
+      location = req.body.location;
+      bio = req.body.bio;
+      experience = req.body.experience;
+      companyName = req.body.companyName;
+      dob = req.body.dob;
+    } else {
+      // fallback for JSON
+      ({ name, email, password, phone, location, bio, experience, companyName, dob } = req.body);
+    }
 
     // Validate required fields
     if (!name || !email || !password || !phone || !location) {
-      console.log('Missing required fields:', { name: !!name, email: !!email, password: !!password, phone: !!phone, location: !!location });
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields'
       });
     }
-
-    // Validate broker-specific fields
-    if (!brokerProfile || !brokerProfile.experience ||
-        !brokerProfile.specialization || brokerProfile.specialization.length === 0) {
-      console.log('Missing broker fields:', { 
-        brokerProfile: !!brokerProfile, 
-        experience: brokerProfile?.experience, 
-        specialization: brokerProfile?.specialization 
-      });
+    if (!experience) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required broker information'
+        message: 'Experience is required'
       });
     }
 
@@ -108,14 +110,60 @@ router.post('/register-broker', async (req, res) => {
       });
     }
 
-    // License number check removed since it's no longer required
+    // OCR verification for ID proof
+    let ocrResult = { status: 'skipped' };
+    let verificationStatus = 'pending';
+    if (req.file && req.file.mimetype && req.file.path) {
+      if (req.file.mimetype.startsWith('image/')) {
+        console.log('🔍 OCR Validation Input:', {
+          expectedName: name,
+          expectedDob: dob || '',
+          filePath: req.file.path
+        });
+        
+        ocrResult = await ocrIdProofAndValidate({
+          filePath: req.file.path,
+          expectedName: name,
+          expectedDob: dob || '',
+          expectedIdNumber: ''
+        });
+        
+        console.log('🔍 OCR Validation Result:', {
+          status: ocrResult.status,
+          extracted: ocrResult.extracted,
+          matched: ocrResult.matched,
+          notes: ocrResult.notes
+        });
+        // Always require admin approval, regardless of OCR status
+        if (ocrResult.status !== 'passed') {
+          verificationStatus = 'under_review';
+        } else {
+          verificationStatus = 'pending'; // Changed from 'approved' to 'pending' to require admin approval
+        }
+      } else {
+        // Only allow images for now
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'ID proof must be an image file (JPG, PNG)'
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'ID proof image is required'
+      });
+    }
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create new broker user
-    const newBroker = new User({
+  // Create new broker user (use Register model)
+  const Register = require('../models/Register');
+    const newBroker = new Register({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password: hashedPassword,
@@ -124,14 +172,29 @@ router.post('/register-broker', async (req, res) => {
       bio: bio?.trim() || '',
       role: 'broker',
       brokerProfile: {
-        experience: brokerProfile.experience,
-        specialization: brokerProfile.specialization,
-        companyName: brokerProfile.companyName?.trim() || '',
-        companyAddress: brokerProfile.companyAddress?.trim() || '',
-        education: brokerProfile.education?.trim() || '',
-        previousWork: brokerProfile.previousWork?.trim() || '',
-        verificationStatus: 'pending'
-      }
+        licenseNumber: '',
+        experience: experience,
+        specialization: ['Rubber Trading'],
+        companyName: companyName?.trim() || '',
+        companyAddress: '',
+        education: '',
+        previousWork: '',
+        verificationStatus,
+        ocrValidationStatus: ocrResult.status || 'not_checked',
+        ocrValidationReason: ocrResult.notes || '',
+        rating: 0,
+        totalDeals: 0,
+        successfulDeals: 0
+      },
+      idProof: req.file ? {
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        path: req.file.path,
+        url: `/uploads/broker-idproofs/${req.file.filename}`
+      } : undefined,
+      verification: { idOcr: ocrResult }
     });
 
     await newBroker.save();
@@ -147,13 +210,14 @@ router.post('/register-broker', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Broker registration successful! Your account is pending verification.',
+      message: 'Broker registration successful! Your account is pending admin approval.',
       data: {
         id: newBroker._id,
         name: newBroker.name,
         email: newBroker.email,
         role: newBroker.role,
-        verificationStatus: newBroker.brokerProfile.verificationStatus
+        verificationStatus: newBroker.brokerProfile.verificationStatus,
+        ocrResult: ocrResult
       }
     });
 

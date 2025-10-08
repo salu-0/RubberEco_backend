@@ -94,11 +94,21 @@ const userSchema = new mongoose.Schema({
     },
     verificationStatus: {
       type: String,
-      enum: ['pending', 'verified', 'rejected'],
+      enum: ['pending', 'approved', 'rejected', 'under_review'],
       default: 'pending'
     },
     verificationDate: {
       type: Date
+    },
+    // OCR validation fields
+    ocrValidationStatus: {
+      type: String,
+      enum: ['passed', 'failed', 'not_checked'],
+      default: 'not_checked'
+    },
+    ocrValidationReason: {
+      type: String,
+      default: ''
     },
     rating: {
       type: Number,

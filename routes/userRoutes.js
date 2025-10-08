@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { preventNurseryAdminAccess } = require('../middlewares/nurseryAdminAuth');
 const {
   getAllUsers,
   getUserById,
@@ -36,44 +37,44 @@ const verifyToken = (req, res, next) => {
 };
 
 // GET /api/users/all - Get all users
-router.get('/all', verifyToken, getAllUsers);
+router.get('/all', preventNurseryAdminAccess, verifyToken, getAllUsers);
 
 // GET /api/users/stats - Get user statistics
-router.get('/stats', verifyToken, getUserStats);
+router.get('/stats', preventNurseryAdminAccess, verifyToken, getUserStats);
 
 // GET /api/users/register-stats - Get statistics from Register collection
-router.get('/register-stats', verifyToken, getRegisterStats);
+router.get('/register-stats', preventNurseryAdminAccess, verifyToken, getRegisterStats);
 
 // GET /api/users/recent-registrations - Get recent registrations from Register collection
-router.get('/recent-registrations', verifyToken, getRecentRegistrations);
+router.get('/recent-registrations', preventNurseryAdminAccess, verifyToken, getRecentRegistrations);
 
 // GET /api/users/role/:role - Get users by role
-router.get('/role/:role', verifyToken, getUsersByRole);
+router.get('/role/:role', preventNurseryAdminAccess, verifyToken, getUsersByRole);
 
 // GET /api/users/supabase - Get all Supabase users (must be before /:id route)
-router.get('/supabase', verifyToken, getSupabaseUsers);
+router.get('/supabase', preventNurseryAdminAccess, verifyToken, getSupabaseUsers);
 
 // PUT /api/users/supabase/role - Update Supabase user role
-router.put('/supabase/role', verifyToken, updateSupabaseUserRole);
+router.put('/supabase/role', preventNurseryAdminAccess, verifyToken, updateSupabaseUserRole);
 
 // PUT /api/users/supabase/:id - Update Supabase user profile
-router.put('/supabase/:id', (req, res, next) => {
+router.put('/supabase/:id', preventNurseryAdminAccess, (req, res, next) => {
   console.log('🎯 PUT /supabase/:id route hit with ID:', req.params.id);
   console.log('🎯 Request body:', req.body);
   next();
 }, verifyToken, require('../controllers/supabaseController').updateSupabaseUserProfile);
 
 // GET /api/users/:id - Get user by ID
-router.get('/:id', verifyToken, getUserById);
+router.get('/:id', preventNurseryAdminAccess, verifyToken, getUserById);
 
 // PUT /api/users/:id - Update user (admin)
-router.put('/:id', (req, res, next) => {
+router.put('/:id', preventNurseryAdminAccess, (req, res, next) => {
   console.log('🎯 PUT /:id route hit with ID:', req.params.id);
   console.log('🎯 Request body:', req.body);
   next();
 }, verifyToken, updateUser);
 
 // DELETE /api/users/:id - Delete user
-router.delete('/:id', verifyToken, deleteUser);
+router.delete('/:id', preventNurseryAdminAccess, verifyToken, deleteUser);
 
 module.exports = router;

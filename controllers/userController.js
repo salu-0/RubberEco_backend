@@ -324,10 +324,19 @@ exports.getUsersByRole = async (req, res) => {
       email_verified: user.isVerified,
       isVerified: user.isVerified,
       // Include broker-specific details if available
-      brokerDetails: user.brokerDetails || null
+      brokerDetails: user.brokerDetails || null,
+      // Include broker profile with OCR validation status
+      brokerProfile: user.brokerProfile || null,
+      // Include verification data if available
+      verification: user.verification || null
     }));
 
     console.log(`📊 Formatted ${formattedUsers.length} users for response`);
+    console.log('📊 Sample broker data being returned:', formattedUsers[0] ? {
+      name: formattedUsers[0].name,
+      brokerProfile: formattedUsers[0].brokerProfile,
+      verification: formattedUsers[0].verification
+    } : 'No users found');
 
     res.json({
       success: true,

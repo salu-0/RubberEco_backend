@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const ServiceRequest = require('../models/ServiceRequest');
+const ServiceRequestLegacy = require('../models/ServiceRequestLegacy');
 const User = require('../models/User');
+const Register = require('../models/Register');
 const { protect } = require('../middlewares/auth');
 const { sendServiceRequestEmail } = require('../utils/emailService');
 
@@ -27,8 +29,11 @@ router.post('/', protect, async (req, res) => {
       documents
     } = req.body;
 
-    // Get user information
-    const user = await User.findById(req.user.id);
+    // Get user information (support both Register and User collections)
+    let user = await User.findById(req.user.id);
+    if (!user) {
+      user = await Register.findById(req.user.id);
+    }
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -144,9 +149,13 @@ router.get('/my-requests', protect, async (req, res) => {
 // @access  Private (Field Worker/Admin)
 router.get('/all', protect, async (req, res) => {
   try {
-    // Check if user is field worker or admin
-    const user = await User.findById(req.user.id);
-    if (!user || !['field_worker', 'admin'].includes(user.role)) {
+    // Check if user is field worker or admin (support Register collection)
+    let user = await User.findById(req.user.id);
+    if (!user) {
+      user = await Register.findById(req.user.id);
+    }
+    const role = user?.role;
+    if (!user || !['field_worker', 'admin'].includes(role)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Field worker or admin role required.'
@@ -154,22 +163,75 @@ router.get('/all', protect, async (req, res) => {
     }
 
     const { status, serviceType, page = 1, limit = 10 } = req.query;
+
+    // Normalize filters to be tolerant to UI variations
+    const normalizeStatus = (value) => {
+      if (!value || value === 'all') return null;
+      const v = String(value).toLowerCase();
+      if (v === 'pending') return ['submitted', 'under_review'];
+      if (v === 'open') return ['submitted', 'under_review', 'negotiation'];
+      return [v];
+    };
+
+    const normalizeServiceType = (value) => {
+      if (!value || value === 'all') return null;
+      const v = String(value).toLowerCase();
+      if (['fertilizers', 'fertilizer', 'fert'].includes(v)) return 'fertilizer';
+      if (['rain_guard', 'rainguard', 'rain-guard', 'rain'].includes(v)) return 'rain_guard';
+      return v;
+    };
     
     const query = {};
-    if (status && status !== 'all') {
-      query.status = status;
+    const statuses = normalizeStatus(status);
+    const type = normalizeServiceType(serviceType);
+    if (statuses && statuses.length > 0) {
+      query.status = { $in: statuses };
     }
-    if (serviceType && serviceType !== 'all') {
-      query.serviceType = serviceType;
+    if (type) {
+      query.serviceType = type;
     }
 
-    const serviceRequests = await ServiceRequest.find(query)
+    console.log('🧪 ServiceRequests/all query:', JSON.stringify(query));
+    let serviceRequests = await ServiceRequest.find(query)
       .populate('userId', 'name email phone')
       .sort({ submittedDate: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const total = await ServiceRequest.countDocuments(query);
+    let total = await ServiceRequest.countDocuments(query);
+    console.log(`🧪 ServiceRequests/all found: ${serviceRequests.length} (total ${total})`);
+
+    // If no results from the explicit 'serviceRequests' collection, try legacy lowercased 'servicerequests'
+    if (serviceRequests.length === 0 && total === 0) {
+      console.log('🧪 Fallback to legacy collection: servicerequests');
+      serviceRequests = await ServiceRequestLegacy.find(query)
+        .populate('userId', 'name email phone')
+        .sort({ submittedDate: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit);
+      total = await ServiceRequestLegacy.countDocuments(query);
+      console.log(`🧪 Legacy collection results: ${serviceRequests.length} (total ${total})`);
+    }
+
+    // Fallback: if filters yielded 0, return latest items without filters for admin visibility
+    if (serviceRequests.length === 0 && (statuses || type)) {
+      console.log('🧪 No results for filters. Returning unfiltered latest for visibility.');
+      serviceRequests = await ServiceRequest.find({})
+        .populate('userId', 'name email phone')
+        .sort({ submittedDate: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit);
+      total = await ServiceRequest.countDocuments({});
+
+      if (serviceRequests.length === 0 && total === 0) {
+        serviceRequests = await ServiceRequestLegacy.find({})
+          .populate('userId', 'name email phone')
+          .sort({ submittedDate: -1 })
+          .limit(limit * 1)
+          .skip((page - 1) * limit);
+        total = await ServiceRequestLegacy.countDocuments({});
+      }
+    }
 
     res.json({
       success: true,
@@ -208,9 +270,10 @@ router.get('/:id', protect, async (req, res) => {
     }
 
     // Check access permissions
-    const user = await User.findById(req.user.id);
+    let user = await User.findById(req.user.id);
+    if (!user) user = await Register.findById(req.user.id);
     const isOwner = serviceRequest.userId.toString() === req.user.id;
-    const isFieldWorker = ['field_worker', 'admin'].includes(user.role);
+    const isFieldWorker = !!user && ['field_worker', 'admin'].includes(user.role);
     
     if (!isOwner && !isFieldWorker) {
       return res.status(403).json({
@@ -241,7 +304,8 @@ router.put('/:id/status', protect, async (req, res) => {
     const { status, reviewNotes, estimatedCost } = req.body;
 
     // Check if user is field worker or admin
-    const user = await User.findById(req.user.id);
+    let user = await User.findById(req.user.id);
+    if (!user) user = await Register.findById(req.user.id);
     if (!user || !['field_worker', 'admin'].includes(user.role)) {
       return res.status(403).json({
         success: false,
@@ -407,7 +471,8 @@ router.put('/:id/assign', protect, async (req, res) => {
 router.put('/:id/negotiate/propose', protect, async (req, res) => {
   try {
     const { numberOfTrees, ratePerTree, preferredDate, notes } = req.body;
-    const user = await User.findById(req.user.id);
+    let user = await User.findById(req.user.id);
+    if (!user) user = await Register.findById(req.user.id);
     if (!user || !['field_worker', 'admin'].includes(user.role)) {
       return res.status(403).json({ success: false, message: 'Only staff/admin can propose negotiation' });
     }
@@ -483,7 +548,8 @@ router.put('/:id/negotiate/accept', protect, async (req, res) => {
     if (!sr) return res.status(404).json({ success: false, message: 'Service request not found' });
 
     // Basic authorization: owner farmer or staff/admin
-    const user = await User.findById(req.user.id);
+    let user = await User.findById(req.user.id);
+    if (!user) user = await Register.findById(req.user.id);
     const isFarmer = sr.userId.toString() === req.user.id;
     const isStaff = !!user && ['field_worker', 'admin'].includes(user.role);
     if (!isFarmer && !isStaff) {
@@ -524,7 +590,8 @@ router.put('/:id/negotiate/reject', protect, async (req, res) => {
     const sr = await ServiceRequest.findById(req.params.id);
     if (!sr) return res.status(404).json({ success: false, message: 'Service request not found' });
 
-    const user = await User.findById(req.user.id);
+    let user = await User.findById(req.user.id);
+    if (!user) user = await Register.findById(req.user.id);
     const isFarmer = sr.userId.toString() === req.user.id;
     const isStaff = !!user && ['field_worker', 'admin'].includes(user.role);
     if (!isFarmer && !isStaff) {

@@ -5,6 +5,7 @@ const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const Register = require('../models/Register');
 const Staff = require('../models/Staff');
+const NurseryAdmin = require('../models/NurseryAdmin');
 const { generateToken } = require('../utils/jwt');
 
 // Helper function for sending error responses
@@ -183,10 +184,17 @@ exports.loginUser = async (req, res) => {
     console.log('🔍 Checking User collection for:', email);
     let userUser = await User.findOne({ email }).select('+password');
 
+    console.log('🔍 Checking NurseryAdmin collection for:', email);
+    let nurseryAdmin = await NurseryAdmin.findOne({ email }).select('+password');
+
     let user = null;
 
     // Prioritize based on role and collection
-    if (userUser && userUser.role === 'broker') {
+    if (nurseryAdmin) {
+      console.log('✅ Found nursery admin in NurseryAdmin collection:', nurseryAdmin.name);
+      user = nurseryAdmin;
+      isStaff = false;
+    } else if (userUser && userUser.role === 'broker') {
       console.log('✅ Found broker user in User collection:', userUser.name);
       user = userUser;
       isStaff = false;
@@ -228,15 +236,16 @@ exports.loginUser = async (req, res) => {
       return sendErrorResponse(res, 403, 'Please verify your email to continue');
     }
 
-    // Generate JWT token
-    const token = generateToken(user);
+    // Generate JWT token with correct role
+    const userRole = isStaff ? 'staff' : (nurseryAdmin ? 'nursery_admin' : user.role);
+    const token = generateToken(user, userRole);
 
     // Send response without password
     const userResponse = {
       id: user._id,
       name: user.name,
       email: user.email,
-      role: isStaff ? 'staff' : user.role,
+      role: userRole,
       isVerified: isStaff ? true : user.isVerified, // Staff are considered verified by default
       ...(isStaff && {
         department: user.department,
@@ -244,6 +253,12 @@ exports.loginUser = async (req, res) => {
         staffRole: user.role, // Keep the original staff role (field_officer, tapper, etc.)
         // Check if this staff member should use staff dashboard
         useStaffDashboard: ['tapper', 'field_officer', 'supervisor', 'trainer'].includes(user.role)
+      }),
+      ...(nurseryAdmin && {
+        nurseryCenterId: user.nurseryCenterId,
+        nurseryCenterName: user.nurseryCenterName,
+        location: user.location,
+        permissions: user.permissions
       })
     };
 
@@ -321,12 +336,14 @@ exports.resendVerificationEmail = async (req, res) => {
     user.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000;
     await user.save();
 
-    // Send email
+    // Build verify URL
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+    const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${verificationToken}`;
+
+    // Send email if SMTP configured, otherwise return URL for dev convenience
     try {
       if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
         const transporter = createEmailTransporter();
-        const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
-        const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${verificationToken}`;
         await transporter.sendMail({
           from: process.env.EMAIL_USER,
           to: user.email,
@@ -334,12 +351,20 @@ exports.resendVerificationEmail = async (req, res) => {
           html: `<p>Please verify your email by clicking the link below:</p>
                  <p><a href="${verifyUrl}">Verify Email</a></p>`
         });
+        console.log('📧 Verification email sent to:', user.email);
+        console.log('🔗 Verification URL:', verifyUrl);
+        return res.json({ success: true, message: 'Verification email sent' });
+      } else {
+        console.log('⚠️ EMAIL_USER/PASS not configured. Returning verification URL for development.');
+        console.log('🔗 Verification URL:', verifyUrl);
+        return res.json({ success: true, message: 'Verification link generated (dev)', verifyUrl });
       }
     } catch (emailError) {
       console.error('Resend verification email failed:', emailError.message);
+      // Still provide the URL so user can proceed
+      console.log('🔗 Fallback verification URL:', verifyUrl);
+      return res.status(200).json({ success: true, message: 'Unable to send email. Use the link to verify.', verifyUrl });
     }
-
-    res.json({ success: true, message: 'Verification email sent' });
   } catch (error) {
     console.error('Resend verification error:', error);
     sendErrorResponse(res, 500, 'Server error while resending verification email');

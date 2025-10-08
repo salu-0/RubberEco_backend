@@ -11,6 +11,9 @@ require('./models/LandRegistration');
 require('./models/TenancyOffering');
 require('./models/Certificate');
 require('./models/Attendance');
+require('./models/NurseryAdmin');
+require('./models/Shipment');
+require('./models/Payment');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const staffRoutes = require('./routes/staffRoutes');
@@ -32,6 +35,13 @@ const landRegistrationRoutes = require('./routes/landRegistration');
 const tenancyOfferingsRoutes = require('./routes/tenancyOfferings');
 const certificateRoutes = require('./routes/certificateRoutes');
 const attendanceRoutes = require('./routes/attendance');
+const nurseryAdminRoutes = require('./routes/nurseryAdminRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const BidAlert = require('./models/BidAlert');
+const Bid = require('./models/Bid');
+const TreeLot = require('./models/TreeLot');
+const Register = require('./models/Register');
+const { createEmailTransporter } = require('./utils/emailService');
 
 const cors = require('cors');
 
@@ -230,6 +240,15 @@ app.use('/api/certificates', certificateRoutes);
 // Attendance routes
 app.use('/api/attendance', attendanceRoutes);
 
+// Nursery admin routes
+app.use('/api/nursery-admin', nurseryAdminRoutes);
+
+// Order routes
+app.use('/api/orders', orderRoutes);
+
+// Admin payments routes
+const adminPaymentsRoutes = require('./routes/adminPayments');
+app.use('/api/admin', adminPaymentsRoutes);
 
 
 
@@ -250,4 +269,64 @@ app.listen(PORT, async () => {
   if (testEmailConfig) {
     await testEmailConfig();
   }
+
+  // Lightweight in-process scheduler to send 'bidding ends tomorrow' alerts
+  const transporter = createEmailTransporter();
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+      // Find lots ending between 24h and 25h from now to avoid repeated sends
+      const lotsEndingSoon = await TreeLot.find({
+        biddingEndDate: { $gte: in24h, $lte: new Date(in24h.getTime() + 60 * 60 * 1000) },
+        status: 'active'
+      }).lean();
+
+      if (lotsEndingSoon.length === 0) return;
+
+      for (const lot of lotsEndingSoon) {
+        // Top bid for the lot
+        const topBid = await Bid.findOne({ lotId: lot.lotId, status: 'active' }).sort({ amount: -1 }).lean();
+        if (!topBid) continue;
+
+        // Any brokers who set an alert for this lot and not notified yet
+        const alerts = await BidAlert.find({ lotId: lot.lotId, type: 'ending_soon', notified: false }).lean();
+        if (alerts.length === 0) continue;
+
+        for (const alert of alerts) {
+          const broker = await Register.findById(alert.bidderId).lean();
+          if (!broker || !broker.email) continue;
+
+          const isSecuring = String(topBid.bidderId) === String(alert.bidderId);
+          const subject = `Reminder: Bidding for Lot #${lot.lotId} ends tomorrow`;
+          const html = `
+            <div style="font-family:Arial,sans-serif;padding:16px">
+              <h2>⏰ Bid Ending Tomorrow</h2>
+              <p>Hello ${broker.name || 'Broker'},</p>
+              <p>Bidding for tree lot <strong>#${lot.lotId}</strong> ends on <strong>${new Date(lot.biddingEndDate).toLocaleString('en-IN')}</strong>.</p>
+              <p>${isSecuring ? 'You are currently securing the highest bid.' : 'You are not the highest bidder currently.'}</p>
+              <p>Current highest: <strong>₹${(topBid.amount||0).toLocaleString('en-IN')}</strong></p>
+              <p><em>This alert was sent because you enabled notifications for this lot.</em></p>
+            </div>`;
+
+          try {
+            await transporter.sendMail({
+              from: `"RubberEco" <${process.env.EMAIL_USER}>`,
+              to: broker.email,
+              subject,
+              html
+            });
+
+            // mark as notified
+            await BidAlert.updateOne({ _id: alert._id }, { notified: true, notifiedAt: new Date() });
+          } catch (e) {
+            console.warn('Failed to send bid alert email:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Bid alert scheduler error:', e.message);
+    }
+  }, 15 * 60 * 1000); // run every 15 minutes
 });

@@ -16,6 +16,9 @@ const nurseryBookingSchema = new mongoose.Schema({
   amountBalance: { type: Number, required: true },
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'cancelled', 'completed'], default: 'pending' },
   approvalNotes: { type: String },
+  shipmentRequired: { type: Boolean, default: false },
+  shippingFee: { type: Number, default: 0 },
+  shippingAddressText: { type: String },
   payment: {
     advancePaid: { type: Boolean, default: false },
     advanceTxnId: { type: String },

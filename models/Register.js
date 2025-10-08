@@ -40,6 +40,68 @@ const registerSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+    brokerProfile: {
+      licenseNumber: {
+        type: String,
+        trim: true,
+        sparse: true
+      },
+      experience: {
+        type: String,
+        trim: true
+      },
+      specialization: [{
+        type: String,
+        trim: true
+      }],
+      companyName: {
+        type: String,
+        trim: true
+      },
+      companyAddress: {
+        type: String,
+        trim: true
+      },
+      education: {
+        type: String,
+        trim: true
+      },
+      previousWork: {
+        type: String,
+        trim: true
+      },
+      verificationStatus: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected', 'under_review'],
+        default: 'pending'
+      },
+      verificationDate: {
+        type: Date
+      },
+      ocrValidationStatus: {
+        type: String,
+        enum: ['passed', 'failed', 'not_checked'],
+        default: 'not_checked'
+      },
+      ocrValidationReason: {
+        type: String,
+        default: ''
+      },
+      rating: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0
+      },
+      totalDeals: {
+        type: Number,
+        default: 0
+      },
+      successfulDeals: {
+        type: Number,
+        default: 0
+      }
+    },
   profileImage: {
     type: String,
     default: ''
@@ -133,6 +195,43 @@ const registerSchema = new mongoose.Schema({
     successfulDeals: {
       type: Number,
       default: 0
+    }
+  },
+
+  // Nursery admin specific fields
+  nurseryCenterId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'NurseryCenter',
+    default: null
+  },
+  nurseryCenterName: {
+    type: String,
+    default: ''
+  },
+  permissions: {
+    managePlants: {
+      type: Boolean,
+      default: true
+    },
+    manageStock: {
+      type: Boolean,
+      default: true
+    },
+    managePricing: {
+      type: Boolean,
+      default: true
+    },
+    manageShipments: {
+      type: Boolean,
+      default: true
+    },
+    managePayments: {
+      type: Boolean,
+      default: true
+    },
+    viewReports: {
+      type: Boolean,
+      default: true
     }
   }
 

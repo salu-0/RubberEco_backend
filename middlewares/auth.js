@@ -25,9 +25,29 @@ const protect = async (req, res, next) => {
 
 
     try {
-      // Verify token
+      // Verify token with multiple possible secrets for compatibility
+      const secretsToTry = [
+        process.env.JWT_SECRET,
+        'dev-insecure-secret-change-me', // current dev fallback
+        'your-secret-key' // legacy fallback
+      ].filter(Boolean);
+
       console.log('🔑 Verifying token with secret:', process.env.JWT_SECRET ? 'Present' : 'Missing');
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+
+      let decoded;
+      let lastError;
+      for (const secret of secretsToTry) {
+        try {
+          decoded = jwt.verify(token, secret);
+          break;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+
+      if (!decoded) {
+        throw lastError || new Error('Token verification failed');
+      }
       console.log('🔍 Decoded token:', { id: decoded.id, email: decoded.email, exp: decoded.exp });
 
       // Get user from database - check both User and Staff collections

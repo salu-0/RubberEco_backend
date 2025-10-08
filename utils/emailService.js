@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
+const Register = require('../models/Register');
 
 const OAuth2 = google.auth.OAuth2;
 
@@ -1841,6 +1842,65 @@ This is an automated message. Please do not reply to this email.
   }
 };
 
+// Notify a broker when they have been outbid on a lot
+const sendOutbidNotificationEmail = async ({ lotId, previousBidderId, previousAmount, newAmount }) => {
+  try {
+    if (!previousBidderId) return { success: false, message: 'No previous bidder to notify' };
+
+    const broker = await Register.findById(previousBidderId).lean();
+    if (!broker || !broker.email) return { success: false, message: 'Broker email not found' };
+
+    const transporter = createEmailTransporter();
+
+    const subject = `You have been outbid on Lot #${lotId}`;
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+      <body style="font-family: Arial, sans-serif; background:#f8fafc; margin:0; padding:24px;">
+        <div style="max-width:640px; margin:0 auto; background:#ffffff; border-radius:12px; box-shadow:0 4px 16px rgba(0,0,0,0.06); overflow:hidden;">
+          <div style="background:linear-gradient(135deg,#dc2626,#ef4444); color:#fff; padding:20px 24px;">
+            <h1 style="margin:0; font-size:20px;">You have been outbid</h1>
+            <p style="margin:4px 0 0 0; opacity:.9;">Lot #${lotId}</p>
+          </div>
+          <div style="padding:24px;">
+            <p style="margin:0 0 12px 0; color:#111827;">Hello ${broker.name || 'Broker'},</p>
+            <p style="margin:0 0 16px 0; color:#374151;">Your bid is no longer the highest for lot <strong>#${lotId}</strong>.</p>
+            <div style="background:#fef2f2; border-left:4px solid #ef4444; padding:12px 16px; border-radius:8px; margin-bottom:16px; color:#7f1d1d;">
+              <div style="display:flex; justify-content:space-between;">
+                <span>Previous highest</span>
+                <strong>₹${Number(previousAmount || 0).toLocaleString('en-IN')}</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between;">
+                <span>New highest</span>
+                <strong>₹${Number(newAmount || 0).toLocaleString('en-IN')}</strong>
+              </div>
+            </div>
+            <p style="margin:0 0 8px 0; color:#374151;">Consider increasing your bid to stay competitive.</p>
+            <div style="text-align:center; margin-top:20px;">
+              <a href="http://localhost:5175/broker/bids" style="display:inline-block; background:#ef4444; color:#fff; text-decoration:none; padding:12px 20px; border-radius:8px; font-weight:600;">Review Bids</a>
+            </div>
+          </div>
+          <div style="background:#f9fafb; color:#6b7280; padding:16px; text-align:center; font-size:12px;">This is an automated message from RubberEco.</div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const result = await transporter.sendMail({
+      from: `"RubberEco" <${process.env.EMAIL_USER}>`,
+      to: broker.email,
+      subject,
+      html
+    });
+
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.warn('Failed to send outbid email:', error.message);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendStaffApplicationConfirmation,
   sendStaffWelcomeEmail,
@@ -1851,5 +1911,6 @@ module.exports = {
   testEmailConfig,
   createEmailTransporter,
   sendServiceRequestEmail,
-  sendNurseryBookingApprovalEmail
+  sendNurseryBookingApprovalEmail,
+  sendOutbidNotificationEmail
 };
