@@ -520,6 +520,25 @@ const changeStaffPassword = async (req, res) => {
   }
 };
 
+// Utility: Reset staff password (for troubleshooting)
+exports.resetStaffPassword = async (req, res) => {
+  const { email, newPassword } = req.body;
+  if (!email || !newPassword) {
+    return res.status(400).json({ success: false, message: 'Email and newPassword required' });
+  }
+  try {
+    const staff = await Staff.findOne({ email: email.toLowerCase() });
+    if (!staff) {
+      return res.status(404).json({ success: false, message: 'Staff not found' });
+    }
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    staff.password = hashedPassword;
+    await staff.save();
+    return res.json({ success: true, message: 'Password reset successfully' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Error resetting password', error: err.message });
+  }
+};
 
 
 module.exports = {
@@ -529,5 +548,6 @@ module.exports = {
   updateStaff,
   deleteStaff,
   getStaffStats,
-  changeStaffPassword
+  changeStaffPassword,
+  resetStaffPassword: exports.resetStaffPassword
 };

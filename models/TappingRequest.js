@@ -3,11 +3,10 @@ const mongoose = require('mongoose');
 // Ensure Register model is loaded
 require('./Register');
 
-const tappingRequestSchema = new mongoose.Schema({
-  // Request identification
+const TappingRequestSchema = new mongoose.Schema({
+  // Request ID (auto-generated)
   requestId: {
     type: String,
-    required: true,
     unique: true
   },
   
@@ -29,7 +28,7 @@ const tappingRequestSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  
+
   // Farm details
   farmLocation: {
     type: String,
@@ -39,11 +38,17 @@ const tappingRequestSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  // Tree count negotiation workflow
   farmerEstimatedTrees: {
     type: Number,
     required: true
   },
+
+  // Enhancement: Multi-tapper support
+  requiredTappers: { type: Number, required: true, default: 1, min: 1 },
+  acceptedTappers: { type: Number, default: 0 },
+  tappersAccepted: [{ type: String }],
+  
+  // Tree count negotiation workflow
   tapperProposedTrees: {
     type: Number,
     default: null
@@ -219,20 +224,20 @@ const tappingRequestSchema = new mongoose.Schema({
 });
 
 // Indexes for better query performance
-tappingRequestSchema.index({ farmerId: 1 });
-tappingRequestSchema.index({ status: 1 });
-tappingRequestSchema.index({ submittedAt: -1 });
-tappingRequestSchema.index({ requestId: 1 });
-tappingRequestSchema.index({ 'assignedTapper.tapperId': 1 });
+TappingRequestSchema.index({ farmerId: 1 });
+TappingRequestSchema.index({ status: 1 });
+TappingRequestSchema.index({ submittedAt: -1 });
+TappingRequestSchema.index({ requestId: 1 });
+TappingRequestSchema.index({ 'assignedTapper.tapperId': 1 });
 
 // Pre-save middleware to update the updatedAt field
-tappingRequestSchema.pre('save', function(next) {
+TappingRequestSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   next();
 });
 
 // Generate request ID using atomic counter to avoid duplicates (before validation)
-tappingRequestSchema.pre('validate', async function(next) {
+TappingRequestSchema.pre('validate', async function(next) {
   try {
     if (this.isNew && !this.requestId) {
       const db = this.constructor.db;
@@ -253,7 +258,7 @@ tappingRequestSchema.pre('validate', async function(next) {
 });
 
 // Virtual for formatted submission date
-tappingRequestSchema.virtual('formattedSubmittedAt').get(function() {
+TappingRequestSchema.virtual('formattedSubmittedAt').get(function() {
   if (!this.submittedAt) return 'N/A';
   return this.submittedAt.toLocaleDateString('en-IN', {
     year: 'numeric',
@@ -265,7 +270,7 @@ tappingRequestSchema.virtual('formattedSubmittedAt').get(function() {
 });
 
 // Virtual for days since submission
-tappingRequestSchema.virtual('daysSinceSubmission').get(function() {
+TappingRequestSchema.virtual('daysSinceSubmission').get(function() {
   if (!this.submittedAt) return 0;
   const now = new Date();
   const diffTime = Math.abs(now - this.submittedAt);
@@ -274,7 +279,7 @@ tappingRequestSchema.virtual('daysSinceSubmission').get(function() {
 });
 
 // Method to check if request is overdue
-tappingRequestSchema.methods.isOverdue = function() {
+TappingRequestSchema.methods.isOverdue = function() {
   if (!this.submittedAt) return false;
   const now = new Date();
   const daysSince = Math.ceil((now - this.submittedAt) / (1000 * 60 * 60 * 24));
@@ -288,7 +293,7 @@ tappingRequestSchema.methods.isOverdue = function() {
 };
 
 // Method to get status color
-tappingRequestSchema.methods.getStatusColor = function() {
+TappingRequestSchema.methods.getStatusColor = function() {
   const colors = {
     submitted: 'blue',
     under_review: 'yellow',
@@ -305,7 +310,7 @@ tappingRequestSchema.methods.getStatusColor = function() {
 };
 
 // Method for tapper to propose tree count
-tappingRequestSchema.methods.tapperProposeTreeCount = function(proposedCount, notes) {
+TappingRequestSchema.methods.tapperProposeTreeCount = function(proposedCount, notes) {
   // Add to negotiation history
   this.negotiationHistory.push({
     proposedBy: 'tapper',
@@ -332,7 +337,7 @@ tappingRequestSchema.methods.tapperProposeTreeCount = function(proposedCount, no
 };
 
 // Method for farmer to counter-propose tree count
-tappingRequestSchema.methods.farmerCounterPropose = function(proposedCount, notes) {
+TappingRequestSchema.methods.farmerCounterPropose = function(proposedCount, notes) {
   // Add to negotiation history
   this.negotiationHistory.push({
     proposedBy: 'farmer',
@@ -362,7 +367,7 @@ tappingRequestSchema.methods.farmerCounterPropose = function(proposedCount, note
 };
 
 // Method for tapper to counter-propose tree count
-tappingRequestSchema.methods.tapperCounterPropose = function(proposedCount, notes) {
+TappingRequestSchema.methods.tapperCounterPropose = function(proposedCount, notes) {
   // Add to negotiation history
   this.negotiationHistory.push({
     proposedBy: 'tapper',
@@ -392,7 +397,7 @@ tappingRequestSchema.methods.tapperCounterPropose = function(proposedCount, note
 };
 
 // Method to accept the other party's proposal
-tappingRequestSchema.methods.acceptProposal = function(acceptedBy, notes) {
+TappingRequestSchema.methods.acceptProposal = function(acceptedBy, notes) {
   let agreedCount;
 
   if (acceptedBy === 'farmer') {
@@ -423,33 +428,33 @@ tappingRequestSchema.methods.acceptProposal = function(acceptedBy, notes) {
 };
 
 // Method to check if user can view this request (role-based access)
-tappingRequestSchema.methods.canUserView = function(userRole) {
+TappingRequestSchema.methods.canUserView = function(userRole) {
   // Only tapper staff can see tapping requests
   const allowedRoles = ['tapper', 'admin', 'supervisor'];
   return allowedRoles.includes(userRole);
 };
 
 // Static method to get requests by farmer
-tappingRequestSchema.statics.getByFarmer = function(farmerId) {
+TappingRequestSchema.statics.getByFarmer = function(farmerId) {
   return this.find({ farmerId }).sort({ submittedAt: -1 });
 };
 
 // Static method to get pending requests for admin
-tappingRequestSchema.statics.getPendingRequests = function() {
+TappingRequestSchema.statics.getPendingRequests = function() {
   return this.find({ 
     status: { $in: ['submitted', 'under_review'] } 
   }).sort({ urgency: -1, submittedAt: 1 });
 };
 
 // Static method to get requests by status
-tappingRequestSchema.statics.getByStatus = function(status) {
+TappingRequestSchema.statics.getByStatus = function(status) {
   return this.find({ status }).sort({ submittedAt: -1 });
 };
 
 // Ensure virtual fields are serialized
-tappingRequestSchema.set('toJSON', { virtuals: true });
-tappingRequestSchema.set('toObject', { virtuals: true });
+TappingRequestSchema.set('toJSON', { virtuals: true });
+TappingRequestSchema.set('toObject', { virtuals: true });
 
-const TappingRequest = mongoose.model('TappingRequest', tappingRequestSchema, 'tapping_request');
+const TappingRequest = mongoose.model('TappingRequest', TappingRequestSchema, 'tapping_request');
 
 module.exports = TappingRequest;

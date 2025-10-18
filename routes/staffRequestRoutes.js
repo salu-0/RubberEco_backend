@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const { protect, adminOnly } = require('../middlewares/auth');
 const { sendStaffWelcomeEmail, sendStaffApplicationConfirmation } = require('../utils/emailService');
 const { ocrIdProofAndValidate } = require('../utils/ocr');
+const { resetStaffPassword } = require('../controllers/staffController');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -601,5 +602,9 @@ router.get('/:id/download/:fileType', protect, adminOnly, async (req, res) => {
     });
   }
 });
+
+// Utility route: Reset staff password
+const staffController = require('../controllers/staffController');
+router.post('/reset-password', staffController.resetStaffPassword);
 
 module.exports = router;

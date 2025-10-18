@@ -308,6 +308,93 @@ router.get('/my-offerings', protect, async (req, res) => {
   }
 });
 
+// @route   PUT /api/tenancy-offerings/:id
+// @desc    Update a tenancy offering
+// @access  Private (Owner only)
+router.put('/:id', protect, async (req, res) => {
+  try {
+    console.log('🏞️ Updating tenancy offering:', req.params.id);
+
+    const offering = await TenancyOffering.findById(req.params.id);
+
+    if (!offering) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenancy offering not found'
+      });
+    }
+
+    // Verify ownership
+    if (offering.ownerId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update your own offerings'
+      });
+    }
+
+    const {
+      minimumDuration,
+      maximumDuration,
+      tenancyRate,
+      rateType,
+      paymentTerms,
+      securityDeposit,
+      allowedActivities,
+      restrictions,
+      maintenanceResponsibility,
+      infrastructureProvided,
+      availableFrom,
+      availableUntil,
+      preferredTenantType,
+      minimumExperience,
+      renewalOption,
+      terminationClause,
+      additionalTerms,
+      contactMethod,
+      bestTimeToContact,
+      showContactDetails
+    } = req.body;
+
+    // Update offering fields
+    if (minimumDuration) offering.leaseDuration.minimumDuration = parseInt(minimumDuration);
+    if (maximumDuration) offering.leaseDuration.maximumDuration = parseInt(maximumDuration);
+    if (tenancyRate) offering.tenancyRate = parseFloat(tenancyRate);
+    if (rateType) offering.rateType = rateType;
+    if (paymentTerms) offering.paymentTerms = paymentTerms;
+    if (securityDeposit !== undefined) offering.securityDeposit = parseFloat(securityDeposit);
+    if (allowedActivities) offering.allowedActivities = allowedActivities;
+    if (restrictions !== undefined) offering.restrictions = restrictions;
+    if (maintenanceResponsibility) offering.maintenanceResponsibility = maintenanceResponsibility;
+    if (infrastructureProvided) offering.infrastructureProvided = infrastructureProvided;
+    if (availableFrom) offering.availableFrom = new Date(availableFrom);
+    if (availableUntil) offering.availableUntil = availableUntil ? new Date(availableUntil) : undefined;
+    if (preferredTenantType) offering.preferredTenantType = preferredTenantType;
+    if (minimumExperience !== undefined) offering.minimumExperience = minimumExperience;
+    if (renewalOption) offering.renewalOption = renewalOption;
+    if (terminationClause !== undefined) offering.terminationClause = terminationClause;
+    if (additionalTerms !== undefined) offering.additionalTerms = additionalTerms;
+    if (contactMethod) offering.contactMethod = contactMethod;
+    if (bestTimeToContact) offering.bestTimeToContact = bestTimeToContact;
+    if (showContactDetails !== undefined) offering.showContactDetails = showContactDetails;
+
+    await offering.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Tenancy offering updated successfully',
+      data: offering
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating tenancy offering:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating tenancy offering',
+      error: error.message
+    });
+  }
+});
+
 // @route   PUT /api/tenancy-offerings/:id/status
 // @desc    Update tenancy offering status (when leased/bought)
 // @access  Private
@@ -443,6 +530,52 @@ router.post('/:id/apply', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while applying for tenancy',
+      error: error.message
+    });
+  }
+});
+
+// @route   DELETE /api/tenancy-offerings/:id
+// @desc    Delete/withdraw a tenancy offering
+// @access  Private (Owner only)
+router.delete('/:id', protect, async (req, res) => {
+  try {
+    const offering = await TenancyOffering.findById(req.params.id);
+
+    if (!offering) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenancy offering not found'
+      });
+    }
+
+    // Verify ownership
+    if (offering.ownerId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only delete your own offerings'
+      });
+    }
+
+    // Update the land registration to make it available again
+    await LandRegistration.findByIdAndUpdate(offering.landId, {
+      isAvailableForTenancy: false,
+      $pull: { tenancyOfferings: offering._id }
+    });
+
+    // Delete the offering
+    await TenancyOffering.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Tenancy offering removed successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting tenancy offering:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting tenancy offering',
       error: error.message
     });
   }

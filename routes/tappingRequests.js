@@ -107,6 +107,7 @@ router.post('/', async (req, res) => {
       farmLocation,
       farmSize,
       numberOfTrees,
+      requiredTappers,
       soilType,
       tappingType,
       startDate,
@@ -156,6 +157,7 @@ router.post('/', async (req, res) => {
       farmLocation,
       farmSize,
       farmerEstimatedTrees: numberOfTrees, // Use numberOfTrees as farmer's estimate
+      requiredTappers: requiredTappers || 1, // Default to 1 if not provided
       soilType,
       tappingType,
       startDate: new Date(startDate),
@@ -295,11 +297,23 @@ router.get('/farmer/:farmerId', async (req, res) => {
 
     const requests = await TappingRequest.getByFarmer(farmerId);
 
+    // Attach application counts (how many staff applied) to each request
+    const ServiceRequestApplication = require('../models/ServiceRequestApplication');
+    const requestsWithCounts = await Promise.all(
+      requests.map(async (reqDoc) => {
+        const applicationsCount = await ServiceRequestApplication.countDocuments({ tappingRequestId: reqDoc._id });
+        // Return plain object with extra field to ensure it serializes
+        const obj = reqDoc.toObject();
+        obj.applicationsCount = applicationsCount;
+        return obj;
+      })
+    );
+
     console.log(`📋 Retrieved ${requests.length} requests for farmer:`, farmerId);
 
     res.status(200).json({
       success: true,
-      data: requests
+      data: requestsWithCounts
     });
 
   } catch (error) {
@@ -1003,6 +1017,33 @@ router.get('/:id', async (req, res) => {
       message: 'Failed to fetch request',
       error: error.message
     });
+  }
+});
+
+// Tapper accepts a request (multi-tapper logic)
+router.post('/:id/acceptRequest', protect, async (req, res) => {
+  const { tapperId } = req.body;
+  try {
+    const request = await TappingRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status === 'completed') return res.status(400).json({ error: 'Request already completed' });
+    if (request.tappersAccepted.includes(tapperId)) return res.status(400).json({ error: 'Tapper already accepted' });
+
+    if (request.acceptedTappers < request.requiredTappers) {
+      request.tappersAccepted.push(tapperId);
+      request.acceptedTappers += 1;
+      if (request.acceptedTappers === request.requiredTappers) {
+        request.status = 'completed';
+      } else {
+        request.status = 'in_progress';
+      }
+      await request.save();
+      return res.json(request);
+    } else {
+      return res.status(400).json({ error: 'All tappers already accepted' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

@@ -130,6 +130,86 @@ router.post('/submit-application/:requestId', async (req, res) => {
   }
 });
 
+// Approve/select an application for a tapping request and update counters
+router.put('/applications/:applicationId/approve', async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const application = await ServiceRequestApplication.findOne({ applicationId });
+    if (!application) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    // Load tapping request
+    const TappingRequest = require('../models/TappingRequest');
+    const request = await TappingRequest.findById(application.tappingRequestId);
+    if (!request) {
+      return res.status(404).json({ success: false, message: 'Tapping request not found' });
+    }
+
+    // Prevent double-counting same tapper
+    const tapperId = String(application.staffId);
+    if (!request.tappersAccepted.includes(tapperId)) {
+      // Only increment if capacity available
+      if (request.acceptedTappers < request.requiredTappers) {
+        request.tappersAccepted.push(tapperId);
+        request.acceptedTappers += 1;
+        request.status = request.acceptedTappers === request.requiredTappers ? 'completed' : 'in_progress';
+        await request.save();
+      }
+    }
+
+    // Update application status to selected/accepted
+    application.status = 'accepted';
+    await application.save();
+
+    return res.json({ success: true, message: 'Application approved and counters updated', data: { acceptedTappers: request.acceptedTappers, requiredTappers: request.requiredTappers } });
+  } catch (err) {
+    console.error('Approve application error:', err);
+    return res.status(500).json({ success: false, message: 'Server error approving application', error: err.message });
+  }
+});
+
+// Reject an application for a tapping request (farmer action)
+router.put('/applications/:applicationId/reject', async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    // Try by custom applicationId; fallback to Mongo _id
+    let application = await ServiceRequestApplication.findOne({ applicationId });
+    if (!application && applicationId.match(/^[0-9a-fA-F]{24}$/)) {
+      application = await ServiceRequestApplication.findById(applicationId);
+    }
+    if (!application) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    // Load tapping request to verify ownership
+    const TappingRequest = require('../models/TappingRequest');
+    const request = await TappingRequest.findById(application.tappingRequestId);
+    if (!request) {
+      return res.status(404).json({ success: false, message: 'Tapping request not found' });
+    }
+
+    // Optional: enforce only farmer owner can reject
+    const userId = req.user?.id?.toString();
+    if (request.farmerId && userId && request.farmerId.toString() !== userId) {
+      return res.status(403).json({ success: false, message: 'Only the request owner can reject applications' });
+    }
+
+    // Do not allow rejecting already accepted applications via this route
+    if (application.status === 'accepted') {
+      return res.status(400).json({ success: false, message: 'Cannot reject an already accepted application' });
+    }
+
+    application.status = 'rejected';
+    await application.save();
+
+    return res.json({ success: true, message: 'Application rejected successfully', data: { status: application.status } });
+  } catch (err) {
+    console.error('Reject application error:', err);
+    return res.status(500).json({ success: false, message: 'Server error rejecting application', error: err.message });
+  }
+});
+
 // Get available service requests
 router.get('/available', async (req, res) => {
   try {
