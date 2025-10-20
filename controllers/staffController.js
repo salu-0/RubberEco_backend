@@ -262,7 +262,95 @@ const createStaff = async (req, res) => {
   }
 };
 
-// Update staff member
+// Update staff profile (staff can update their own profile)
+const updateStaffProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    console.log('🔄 Staff profile update request received');
+    console.log('🔍 Staff ID:', id);
+    console.log('🔍 User ID from token:', req.user?.id);
+    console.log('🔍 Update data keys:', Object.keys(updateData));
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid staff ID'
+      });
+    }
+
+    // Check if the user is trying to update their own profile
+    if (req.user && req.user.id !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update your own profile'
+      });
+    }
+
+    // Find the staff member
+    const staff = await Staff.findById(id);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        message: 'Staff member not found'
+      });
+    }
+
+    // Only allow updating certain fields for profile updates
+    const allowedFields = ['name', 'phone', 'location', 'avatar'];
+    const filteredUpdateData = {};
+    
+    for (const field of allowedFields) {
+      if (updateData[field] !== undefined) {
+        filteredUpdateData[field] = updateData[field];
+      }
+    }
+
+    // Add updated_by field
+    filteredUpdateData.updated_by = req.user ? req.user.id : null;
+
+    console.log('🔍 Filtered update data:', filteredUpdateData);
+
+    const updatedStaff = await Staff.findByIdAndUpdate(
+      id,
+      filteredUpdateData,
+      { new: true, runValidators: true }
+    ).populate('created_by updated_by', 'name email');
+
+    if (!updatedStaff) {
+      return res.status(404).json({
+        success: false,
+        message: 'Staff member not found'
+      });
+    }
+
+    console.log('✅ Staff profile updated successfully');
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: updatedStaff
+    });
+  } catch (error) {
+    console.error('Update staff profile error:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already exists for another staff member'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile',
+      error: error.message
+    });
+  }
+};
+
+// Update staff member (admin only)
 const updateStaff = async (req, res) => {
   try {
     const { id } = req.params;
@@ -546,6 +634,7 @@ module.exports = {
   getStaffById,
   createStaff,
   updateStaff,
+  updateStaffProfile,
   deleteStaff,
   getStaffStats,
   changeStaffPassword,

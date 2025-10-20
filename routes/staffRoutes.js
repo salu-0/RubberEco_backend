@@ -5,6 +5,7 @@ const {
   getStaffById,
   createStaff,
   updateStaff,
+  updateStaffProfile,
   deleteStaff,
   getStaffStats,
   changeStaffPassword
@@ -21,7 +22,8 @@ router.post('/', protect, adminOnly, createStaff);
 // Password change route (must come before /:id route)
 router.put('/:id/change-password', protect, changeStaffPassword);
 
-
+// Staff profile update route (staff can update their own profile)
+router.put('/:id/profile', protect, updateStaffProfile);
 
 // Parameterized routes must come after specific routes
 router.get('/:id', protect, getStaffById);
