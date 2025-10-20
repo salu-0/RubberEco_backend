@@ -131,6 +131,33 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
+// @route   GET /api/bids/broker/:brokerId
+// @desc    Get bids by specific broker (for messaging system)
+// @access  Private
+router.get('/broker/:brokerId', protect, async (req, res) => {
+  try {
+    const brokerId = req.params.brokerId;
+    
+    // Get all bids placed by this broker
+    const bids = await Bid.find({ bidderId: brokerId })
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      bids: bids
+    });
+    
+  } catch (error) {
+    console.error('Error fetching broker bids:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch broker bids',
+      error: error.message
+    });
+  }
+});
+
 // @route   GET /api/bids/my-bids
 // @desc    Get broker's bids
 // @access  Private (Broker only)

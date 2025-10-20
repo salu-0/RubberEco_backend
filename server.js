@@ -1,6 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
+const http = require('http');
+const socketIo = require('socket.io');
+const jwt = require('jsonwebtoken');
 const connectDB = require('./config/db');
 
 // Load models
@@ -14,12 +17,13 @@ require('./models/Attendance');
 require('./models/NurseryAdmin');
 require('./models/Shipment');
 require('./models/Payment');
+require('./models/Message');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const staffRoutes = require('./routes/staffRoutes');
 const treeLotRoutes = require('./routes/treeLots');
 const bidRoutes = require('./routes/bids');
-const messageRoutes = require('./routes/messages');
+const messageRoutes = require('./routes/messageRoutes');
 const adminNotificationRoutes = require('./routes/adminNotifications');
 const tappingRequestRoutes = require('./routes/tappingRequests');
 const availableTappersRoutes = require('./routes/availableTappers');
@@ -261,8 +265,155 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
+
+// Create HTTP server
+const server = http.createServer(app);
+
+// Initialize Socket.IO with CORS configuration
+const io = socketIo(server, {
+  cors: {
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, Postman, file://)
+      if (!origin) return callback(null, true);
+
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'http://127.0.0.1:5175',
+        'http://127.0.0.1:5176',
+        'http://127.0.0.1:3000',
+        'https://rubber-eco-frontend.vercel.app'  // Vercel production frontend
+      ];
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Allow file:// protocol for testing
+      if (origin && origin.startsWith('file://')) {
+        return callback(null, true);
+      }
+
+      return callback(null, true); // Allow all origins for development
+    },
+    credentials: true,
+    methods: ['GET', 'POST']
+  }
+});
+
+// Socket.IO authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.query.token;
+  
+  if (!token) {
+    return next(new Error('Authentication error: No token provided'));
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    socket.userId = decoded.id;
+    socket.userRole = decoded.role;
+    socket.userEmail = decoded.email;
+    next();
+  } catch (err) {
+    next(new Error('Authentication error: Invalid token'));
+  }
+});
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.userId} (${socket.userRole})`);
+  
+  // Join user to their personal room
+  socket.join(`user_${socket.userId}`);
+  
+  // Join conversation rooms
+  socket.on('join_conversation', (data) => {
+    const { conversationId } = data;
+    socket.join(`conversation_${conversationId}`);
+    console.log(`User ${socket.userId} joined conversation ${conversationId}`);
+  });
+  
+  // Leave conversation rooms
+  socket.on('leave_conversation', (data) => {
+    const { conversationId } = data;
+    socket.leave(`conversation_${conversationId}`);
+    console.log(`User ${socket.userId} left conversation ${conversationId}`);
+  });
+  
+  // Handle new messages
+  socket.on('new_message', async (data) => {
+    try {
+      const { conversationId, content, replyTo } = data;
+      
+      // Save message to database (you'll need to implement this)
+      const Message = require('./models/Message');
+      const newMessage = new Message({
+        conversationId,
+        senderId: socket.userId,
+        senderType: socket.userRole,
+        content,
+        replyTo,
+        status: 'sent'
+      });
+      
+      const savedMessage = await newMessage.save();
+      
+      // Broadcast message to conversation room
+      io.to(`conversation_${conversationId}`).emit('new_message', {
+        id: savedMessage._id,
+        conversationId: savedMessage.conversationId,
+        senderId: savedMessage.senderId,
+        senderType: savedMessage.senderType,
+        content: savedMessage.content,
+        timestamp: savedMessage.createdAt,
+        status: savedMessage.status,
+        replyTo: savedMessage.replyTo
+      });
+      
+      console.log(`Message sent in conversation ${conversationId} by ${socket.userId}`);
+    } catch (error) {
+      console.error('Error handling new message:', error);
+      socket.emit('error', { message: 'Failed to send message' });
+    }
+  });
+  
+  // Handle typing indicators
+  socket.on('typing', (data) => {
+    const { conversationId, isTyping } = data;
+    socket.to(`conversation_${conversationId}`).emit('typing', {
+      userId: socket.userId,
+      conversationId,
+      isTyping
+    });
+  });
+  
+  // Handle message status updates
+  socket.on('message_status', (data) => {
+    const { messageId, status } = data;
+    // Update message status in database
+    // Broadcast status update to conversation
+    socket.to(`conversation_${data.conversationId}`).emit('message_status', {
+      messageId,
+      status
+    });
+  });
+  
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log(`User disconnected: ${socket.userId}`);
+  });
+});
+
+// Start server
+server.listen(PORT, async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🔌 WebSocket server ready`);
   console.log(`MongoDB Collection: Register`);
 
   // Test email configuration on startup
