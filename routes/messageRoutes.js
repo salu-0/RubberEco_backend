@@ -16,4 +16,7 @@ router.get('/conversation/:conversationId', auth.protect, messageController.getC
 router.post('/send', auth.protect, messageController.sendMessage);
 router.post('/mark-read', auth.protect, messageController.markAsRead);
 
+// Debug route
+router.get('/debug', auth.protect, messageController.debugDatabase);
+
 module.exports = router;

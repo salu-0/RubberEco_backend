@@ -256,8 +256,8 @@ router.get('/', async (req, res) => {
     }
 
     const offerings = await TenancyOffering.find(query)
-      .populate('landInfo', 'landTitle landLocation district totalArea numberOfTrees')
-      .populate('ownerInfo', 'name email phone')
+      .populate('landId', 'landTitle landLocation district totalArea numberOfTrees')
+      .populate('ownerId', 'name email phone')
       .sort(sortOptions)
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -289,7 +289,8 @@ router.get('/', async (req, res) => {
 router.get('/my-offerings', protect, async (req, res) => {
   try {
     const offerings = await TenancyOffering.find({ ownerId: req.user.id })
-      .populate('landInfo', 'landTitle landLocation district totalArea')
+      .populate('landId', 'landTitle landLocation district totalArea numberOfTrees')
+      .populate('ownerId', 'name email phone')
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -453,8 +454,8 @@ router.put('/:id/status', protect, async (req, res) => {
       req.params.id,
       updateData,
       { new: true }
-    ).populate('landInfo', 'landTitle landLocation')
-     .populate('ownerInfo', 'name email');
+    ).populate('landId', 'landTitle landLocation')
+     .populate('ownerId', 'name email');
 
     res.status(200).json({
       success: true,
