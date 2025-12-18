@@ -12,16 +12,21 @@ const getSeasonForMonth = (month) => {
 exports.getNextMonthForecast = async (req, res) => {
   try {
     const now = new Date();
-    const year = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+    const targetYear = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
     const month = ((now.getMonth() + 1) % 12) + 1; // next month in 1-12
 
-    // For now we only have yearly Monsoon totals in RainfallForecast.
-    // We return a yearly monsoon forecast plus derived metadata for the farmer UI.
-    const forecast = await RainfallForecast.findOne({ year }).lean();
+    // For now we only have yearly Monsoon totals in RainfallForecast (historical).
+    // Try to get forecast for the target year; if not present (e.g. 2025) fall back
+    // to the latest available year so the UI still shows useful guidance.
+    let forecast = await RainfallForecast.findOne({ year: targetYear }).lean();
+
+    if (!forecast) {
+      forecast = await RainfallForecast.findOne().sort({ year: -1 }).lean();
+    }
 
     if (!forecast) {
       return res.status(404).json({
-        message: 'No rainfall forecast available for next month/year yet. Please run the rainfall import script.'
+        message: 'No rainfall forecast data found in the database. Please run the rainfall import script.'
       });
     }
 
