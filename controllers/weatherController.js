@@ -140,4 +140,130 @@ exports.getNextMonthForecast = async (req, res) => {
   }
 };
 
+// GET /api/weather/forecast?month=6&district=Kottayam&year=2026
+exports.getDistrictForecast = async (req, res) => {
+  try {
+    const { month, district, year } = req.query;
+    
+    // Validate inputs
+    const monthNum = parseInt(month, 10);
+    const targetYear = year ? parseInt(year, 10) : null;
+    
+    if (!monthNum || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ message: 'Invalid month. Must be 1-12' });
+    }
+    
+    if (!district) {
+      return res.status(400).json({ message: 'District is required' });
+    }
+
+    const season = getSeasonForMonth(monthNum);
+    const monthName = new Date(2000, monthNum - 1, 1).toLocaleString('en-US', { month: 'long' });
+
+    // Determine target year
+    let forecastYear = targetYear;
+    if (!forecastYear) {
+      const now = new Date();
+      forecastYear = now.getMonth() === 11 && monthNum === 1 
+        ? now.getFullYear() + 1 
+        : now.getFullYear();
+    }
+
+    // Get forecast for specific district and year
+    let forecast = await RainfallForecast.findOne({
+      year: forecastYear,
+      district: district,
+      season: 'Monsoon' // We only have monsoon data, but we'll use it for any month
+    }).lean();
+
+    // If no forecast for target year, get latest available year for this district
+    if (!forecast) {
+      const latestYearDoc = await RainfallForecast.findOne({
+        district: district,
+        season: 'Monsoon'
+      })
+        .sort({ year: -1 })
+        .lean();
+      
+      if (latestYearDoc) {
+        forecast = latestYearDoc;
+        forecastYear = latestYearDoc.year;
+      }
+    }
+
+    if (!forecast) {
+      return res.status(404).json({
+        message: `No rainfall forecast found for ${district}. Please run: npm run import-kerala-rainfall`
+      });
+    }
+
+    // Calculate historical average for this district
+    const historicalDocs = await RainfallForecast.find({
+      district: district,
+      isForecast: { $ne: true },
+      season: 'Monsoon'
+    }).lean();
+
+    const historicalAverage = historicalDocs.length
+      ? historicalDocs.reduce((sum, doc) => sum + (doc.predictedRainfall || 0), 0) / historicalDocs.length
+      : null;
+
+    const percentOfAverage = historicalAverage
+      ? forecast.predictedRainfall / historicalAverage
+      : null;
+
+    // Build time series for this district
+    const allYears = [...new Set(historicalDocs.map(d => d.year))].sort();
+    const series = [];
+    
+    for (const year of allYears) {
+      const yearDoc = await RainfallForecast.findOne({
+        year,
+        district: district,
+        season: 'Monsoon'
+      }).lean();
+      
+      if (yearDoc) {
+        series.push({
+          year,
+          rainfall: yearDoc.predictedRainfall,
+          riskLevel: yearDoc.riskLevel,
+          isForecast: !!yearDoc.isForecast
+        });
+      }
+    }
+
+    // Add forecast year if not in series
+    if (forecast && !series.find(s => s.year === forecastYear)) {
+      series.push({
+        year: forecastYear,
+        rainfall: forecast.predictedRainfall,
+        riskLevel: forecast.riskLevel,
+        isForecast: true
+      });
+    }
+
+    series.sort((a, b) => a.year - b.year);
+
+    return res.json({
+      year: forecastYear,
+      month: monthNum,
+      monthName,
+      season,
+      district: forecast.district,
+      predictedRainfall: forecast.predictedRainfall,
+      riskLevel: forecast.riskLevel,
+      model: forecast.model || 'SARIMA',
+      createdAt: forecast.createdAt,
+      isForecast: !!forecast.isForecast,
+      historicalAverage,
+      percentOfAverage,
+      series
+    });
+  } catch (error) {
+    console.error('Error fetching district forecast:', error);
+    return res.status(500).json({ message: 'Failed to fetch weather forecast' });
+  }
+};
+
 
