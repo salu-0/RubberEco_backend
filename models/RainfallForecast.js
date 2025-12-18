@@ -27,6 +27,10 @@ const rainfallForecastSchema = new mongoose.Schema(
       type: String,
       default: 'SARIMA'
     },
+    isForecast: {
+      type: Boolean,
+      default: false
+    },
     createdAt: {
       type: Date,
       default: Date.now

@@ -34,7 +34,7 @@ const loadHistoricalRainySeasonData = () => {
     const total = parseFloat(totalStr);
 
     if (!Number.isNaN(year) && !Number.isNaN(total)) {
-      records.push({ year, rainfall: total });
+      records.push({ year, rainfall: total, isForecast: false });
     }
   }
 
@@ -70,10 +70,28 @@ const importRainfallForecasts = async () => {
       return;
     }
 
-    const historicalAvg = computeHistoricalAverage(records);
+    // Historical average based only on past observed years
+    const historicalAvg = computeHistoricalAverage(records.filter(r => !r.isForecast));
     const classifyRisk = makeRiskClassifier(historicalAvg);
 
     console.log(`📊 Historical average rainy season rainfall: ${historicalAvg.toFixed(2)}`);
+
+    // Extend data with simple forecasts for future years (e.g. up to 2026)
+    const lastHistoricalYear = Math.max(...records.map(r => r.year));
+    const recentYears = records
+      .filter(r => r.year > lastHistoricalYear - 5 && !r.isForecast);
+    const recentAvg = computeHistoricalAverage(recentYears);
+
+    const futureYears = [2023, 2024, 2025, 2026];
+    futureYears.forEach(year => {
+      if (year > lastHistoricalYear) {
+        records.push({
+          year,
+          rainfall: recentAvg,
+          isForecast: true
+        });
+      }
+    });
 
     const bulkOps = records.map(r => {
       const roundedRainfall = Number(r.rainfall.toFixed(2));
@@ -86,6 +104,7 @@ const importRainfallForecasts = async () => {
         predictedRainfall: roundedRainfall,
         riskLevel,
         model: 'SARIMA',
+        isForecast: r.isForecast || false,
         createdAt: new Date()
       };
 

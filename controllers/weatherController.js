@@ -32,16 +32,31 @@ exports.getNextMonthForecast = async (req, res) => {
 
     const season = getSeasonForMonth(month);
 
+    // Compute long-term historical average (only non-forecast years)
+    const historicalDocs = await RainfallForecast.find({ isForecast: { $ne: true } }).lean();
+    let historicalAverage = null;
+    let percentOfAverage = null;
+
+    if (historicalDocs.length) {
+      const sum = historicalDocs.reduce((acc, doc) => acc + (doc.predictedRainfall || 0), 0);
+      historicalAverage = sum / historicalDocs.length;
+      percentOfAverage = historicalAverage
+        ? forecast.predictedRainfall / historicalAverage
+        : null;
+    }
+
     return res.json({
       year: forecast.year,
       month,
       monthName: new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'long' }),
       season,
-      // Use monsoon total as a proxy risk indicator for the coming season
       predictedSeasonRainfall: forecast.predictedRainfall,
       riskLevel: forecast.riskLevel,
       model: forecast.model,
-      createdAt: forecast.createdAt
+      createdAt: forecast.createdAt,
+      isForecast: !!forecast.isForecast,
+      historicalAverage,
+      percentOfAverage
     });
   } catch (error) {
     console.error('Error fetching next month forecast:', error);
