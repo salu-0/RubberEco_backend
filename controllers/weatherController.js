@@ -15,48 +15,124 @@ exports.getNextMonthForecast = async (req, res) => {
     const targetYear = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
     const month = ((now.getMonth() + 1) % 12) + 1; // next month in 1-12
 
-    // For now we only have yearly Monsoon totals in RainfallForecast (historical).
-    // Try to get forecast for the target year; if not present (e.g. 2025) fall back
-    // to the latest available year so the UI still shows useful guidance.
-    let forecast = await RainfallForecast.findOne({ year: targetYear }).lean();
+    // Get district-wise forecasts for target year
+    let districtForecasts = await RainfallForecast.find({ 
+      year: targetYear,
+      season: 'Monsoon'
+    }).lean();
 
-    if (!forecast) {
-      forecast = await RainfallForecast.findOne().sort({ year: -1 }).lean();
+    // If no forecasts for target year, get latest available year
+    if (!districtForecasts || districtForecasts.length === 0) {
+      const latestYearDoc = await RainfallForecast.findOne()
+        .sort({ year: -1 })
+        .lean();
+      
+      if (latestYearDoc) {
+        districtForecasts = await RainfallForecast.find({
+          year: latestYearDoc.year,
+          season: 'Monsoon'
+        }).lean();
+      }
     }
 
-    if (!forecast) {
+    if (!districtForecasts || districtForecasts.length === 0) {
       return res.status(404).json({
-        message: 'No rainfall forecast data found in the database. Please run the rainfall import script.'
+        message: 'No rainfall forecast data found in the database. Please run: npm run import-kerala-rainfall'
       });
     }
 
     const season = getSeasonForMonth(month);
+    const forecastYear = districtForecasts[0].year;
 
-    // Compute long-term historical average (only non-forecast years)
-    const historicalDocs = await RainfallForecast.find({ isForecast: { $ne: true } }).lean();
-    let historicalAverage = null;
-    let percentOfAverage = null;
+    // Calculate Kerala state average (sum of all districts)
+    const keralaTotalRainfall = districtForecasts.reduce(
+      (sum, doc) => sum + (doc.predictedRainfall || 0), 
+      0
+    );
 
-    if (historicalDocs.length) {
-      const sum = historicalDocs.reduce((acc, doc) => acc + (doc.predictedRainfall || 0), 0);
-      historicalAverage = sum / historicalDocs.length;
-      percentOfAverage = historicalAverage
-        ? forecast.predictedRainfall / historicalAverage
-        : null;
+    // Compute historical average (Kerala state level)
+    const historicalDocs = await RainfallForecast.find({ 
+      isForecast: { $ne: true },
+      season: 'Monsoon'
+    }).lean();
+
+    // Group by year and sum districts to get Kerala total per year
+    const keralaYearlyTotals = {};
+    historicalDocs.forEach(doc => {
+      if (!keralaYearlyTotals[doc.year]) {
+        keralaYearlyTotals[doc.year] = 0;
+      }
+      keralaYearlyTotals[doc.year] += doc.predictedRainfall || 0;
+    });
+
+    const historicalYears = Object.keys(keralaYearlyTotals).map(Number);
+    const historicalTotals = Object.values(keralaYearlyTotals);
+    const historicalAverage = historicalTotals.length 
+      ? historicalTotals.reduce((a, b) => a + b, 0) / historicalTotals.length 
+      : null;
+
+    const percentOfAverage = historicalAverage
+      ? keralaTotalRainfall / historicalAverage
+      : null;
+
+    // Build time series for chart (Kerala state totals per year)
+    const allYears = [...new Set(historicalDocs.map(d => d.year))].sort();
+    const series = [];
+    
+    for (const year of allYears) {
+      const yearDocs = await RainfallForecast.find({ year, season: 'Monsoon' }).lean();
+      const yearTotal = yearDocs.reduce((sum, doc) => sum + (doc.predictedRainfall || 0), 0);
+      const avgRisk = yearDocs.length > 0 
+        ? yearDocs[0].riskLevel // Use first district's risk as proxy
+        : 'Normal';
+      const isForecast = yearDocs.length > 0 ? !!yearDocs[0].isForecast : false;
+      
+      series.push({
+        year,
+        rainfall: yearTotal,
+        riskLevel: avgRisk,
+        isForecast
+      });
     }
 
+    // Add forecast years if not in series
+    const forecastYearDocs = await RainfallForecast.find({ 
+      year: forecastYear, 
+      season: 'Monsoon' 
+    }).lean();
+    if (forecastYearDocs.length > 0 && !series.find(s => s.year === forecastYear)) {
+      const forecastTotal = forecastYearDocs.reduce(
+        (sum, doc) => sum + (doc.predictedRainfall || 0), 
+        0
+      );
+      series.push({
+        year: forecastYear,
+        rainfall: forecastTotal,
+        riskLevel: forecastYearDocs[0].riskLevel,
+        isForecast: true
+      });
+    }
+
+    series.sort((a, b) => a.year - b.year);
+
     return res.json({
-      year: forecast.year,
+      year: forecastYear,
       month,
       monthName: new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'long' }),
       season,
-      predictedSeasonRainfall: forecast.predictedRainfall,
-      riskLevel: forecast.riskLevel,
-      model: forecast.model,
-      createdAt: forecast.createdAt,
-      isForecast: !!forecast.isForecast,
+      predictedSeasonRainfall: keralaTotalRainfall,
+      riskLevel: districtForecasts[0].riskLevel, // Use first district as proxy
+      model: districtForecasts[0].model || 'SARIMA',
+      createdAt: districtForecasts[0].createdAt,
+      isForecast: !!districtForecasts[0].isForecast,
       historicalAverage,
-      percentOfAverage
+      percentOfAverage,
+      series,
+      districts: districtForecasts.map(doc => ({
+        district: doc.district,
+        predictedRainfall: doc.predictedRainfall,
+        riskLevel: doc.riskLevel
+      }))
     });
   } catch (error) {
     console.error('Error fetching next month forecast:', error);

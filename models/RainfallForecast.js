@@ -6,6 +6,10 @@ const rainfallForecastSchema = new mongoose.Schema(
       type: Number,
       required: true
     },
+    district: {
+      type: String,
+      required: true
+    },
     season: {
       type: String,
       default: 'Monsoon'
@@ -41,8 +45,8 @@ const rainfallForecastSchema = new mongoose.Schema(
   }
 );
 
-// Ensure one document per year & season
-rainfallForecastSchema.index({ year: 1, season: 1 }, { unique: true });
+// Ensure one document per year, district & season
+rainfallForecastSchema.index({ year: 1, district: 1, season: 1 }, { unique: true });
 
 module.exports = mongoose.model('RainfallForecast', rainfallForecastSchema);
 
