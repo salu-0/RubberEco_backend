@@ -41,6 +41,7 @@ const certificateRoutes = require('./routes/certificateRoutes');
 const attendanceRoutes = require('./routes/attendance');
 const nurseryAdminRoutes = require('./routes/nurseryAdminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const weatherRoutes = require('./routes/weather');
 const BidAlert = require('./models/BidAlert');
 const Bid = require('./models/Bid');
 const TreeLot = require('./models/TreeLot');
@@ -250,6 +251,9 @@ app.use('/api/nursery-admin', nurseryAdminRoutes);
 
 // Order routes
 app.use('/api/orders', orderRoutes);
+
+// Weather routes (farmer weather insights)
+app.use('/api/weather', weatherRoutes);
 
 // Admin payments routes
 const adminPaymentsRoutes = require('./routes/adminPayments');
