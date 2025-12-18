@@ -169,18 +169,18 @@ exports.getDistrictForecast = async (req, res) => {
         : now.getFullYear();
     }
 
-    // Get forecast for specific district and year
+    // Get forecast for specific district, year, and month
     let forecast = await RainfallForecast.findOne({
       year: forecastYear,
       district: district,
-      season: 'Monsoon' // We only have monsoon data, but we'll use it for any month
+      month: monthNum
     }).lean();
 
-    // If no forecast for target year, get latest available year for this district
+    // If no forecast for target year/month, get latest available year for this district and month
     if (!forecast) {
       const latestYearDoc = await RainfallForecast.findOne({
         district: district,
-        season: 'Monsoon'
+        month: monthNum
       })
         .sort({ year: -1 })
         .lean();
@@ -193,15 +193,15 @@ exports.getDistrictForecast = async (req, res) => {
 
     if (!forecast) {
       return res.status(404).json({
-        message: `No rainfall forecast found for ${district}. Please run: npm run import-kerala-rainfall`
+        message: `No rainfall forecast found for ${district} in ${monthName}. Please run: npm run import-kerala-rainfall`
       });
     }
 
-    // Calculate historical average for this district
+    // Calculate historical average for this specific district and month
     const historicalDocs = await RainfallForecast.find({
       district: district,
-      isForecast: { $ne: true },
-      season: 'Monsoon'
+      month: monthNum,
+      isForecast: { $ne: true }
     }).lean();
 
     const historicalAverage = historicalDocs.length
@@ -212,7 +212,19 @@ exports.getDistrictForecast = async (req, res) => {
       ? forecast.predictedRainfall / historicalAverage
       : null;
 
-    // Build time series for this district
+    // Recalculate risk level based on this district's own average (more accurate)
+    let calculatedRiskLevel = forecast.riskLevel;
+    if (historicalAverage) {
+      if (forecast.predictedRainfall > historicalAverage * 1.1) {
+        calculatedRiskLevel = 'High';
+      } else if (forecast.predictedRainfall < historicalAverage * 0.9) {
+        calculatedRiskLevel = 'Low';
+      } else {
+        calculatedRiskLevel = 'Normal';
+      }
+    }
+
+    // Build time series for this district and month
     const allYears = [...new Set(historicalDocs.map(d => d.year))].sort();
     const series = [];
     
@@ -220,7 +232,7 @@ exports.getDistrictForecast = async (req, res) => {
       const yearDoc = await RainfallForecast.findOne({
         year,
         district: district,
-        season: 'Monsoon'
+        month: monthNum
       }).lean();
       
       if (yearDoc) {
@@ -238,7 +250,7 @@ exports.getDistrictForecast = async (req, res) => {
       series.push({
         year: forecastYear,
         rainfall: forecast.predictedRainfall,
-        riskLevel: forecast.riskLevel,
+        riskLevel: calculatedRiskLevel,
         isForecast: true
       });
     }
@@ -248,11 +260,11 @@ exports.getDistrictForecast = async (req, res) => {
     return res.json({
       year: forecastYear,
       month: monthNum,
-      monthName,
-      season,
+      monthName: forecast.monthName || monthName,
+      season: forecast.season || season,
       district: forecast.district,
       predictedRainfall: forecast.predictedRainfall,
-      riskLevel: forecast.riskLevel,
+      riskLevel: calculatedRiskLevel, // Use recalculated risk based on district's own monthly average
       model: forecast.model || 'SARIMA',
       createdAt: forecast.createdAt,
       isForecast: !!forecast.isForecast,

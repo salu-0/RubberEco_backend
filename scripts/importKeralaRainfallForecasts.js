@@ -46,7 +46,13 @@ const calculateDistrictRatios = () => {
   return ratios;
 };
 
-// Read Kerala historical rainfall CSV
+// Month names mapping
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+// Read Kerala historical rainfall CSV with monthly data
 const loadKeralaHistoricalData = () => {
   const csvPath = path.join(__dirname, '..', 'Kerala-Rainfall-Historical.csv');
   const raw = fs.readFileSync(csvPath, 'utf8');
@@ -56,26 +62,43 @@ const loadKeralaHistoricalData = () => {
   
   const records = [];
   
+  // CSV columns: SUBDIVISION,YEAR,JAN,FEB,MAR,APR,MAY,JUN,JUL,AUG,SEP,OCT,NOV,DEC,ANNUAL,JF,MAM,JJAS,OND
+  // Index:        0           1    2   3   4   5   6   7   8   9   10  11  12  13  14     15 16  17   18
+  
   for (const line of dataLines) {
     const parts = line.split(',');
-    if (parts.length < 18) continue;
+    if (parts.length < 19) continue;
     
     const year = parseInt(parts[1], 10);
-    const jjas = parseFloat(parts[17]); // JJAS column (monsoon rainfall)
+    if (Number.isNaN(year)) continue;
     
-    if (!Number.isNaN(year) && !Number.isNaN(jjas)) {
-      records.push({ year, jjas });
+    // Read monthly data (JAN=2, FEB=3, ..., DEC=13)
+    const monthlyData = {};
+    for (let month = 1; month <= 12; month++) {
+      const monthIndex = month + 1; // JAN is at index 2
+      const rainfall = parseFloat(parts[monthIndex]);
+      if (!Number.isNaN(rainfall)) {
+        monthlyData[month] = rainfall;
+      }
+    }
+    
+    if (Object.keys(monthlyData).length > 0) {
+      records.push({ year, monthlyData });
     }
   }
   
   return records;
 };
 
-// Compute historical average for risk classification
-const computeHistoricalAverage = (records) => {
-  if (!records.length) return 0;
-  const sum = records.reduce((acc, r) => acc + r.jjas, 0);
-  return sum / records.length;
+// Compute historical average for a specific month
+const computeMonthlyHistoricalAverage = (records, month) => {
+  const monthValues = records
+    .map(r => r.monthlyData[month])
+    .filter(val => val !== undefined && !Number.isNaN(val));
+  
+  if (!monthValues.length) return 0;
+  const sum = monthValues.reduce((acc, val) => acc + val, 0);
+  return sum / monthValues.length;
 };
 
 // Classify risk level
@@ -90,20 +113,27 @@ const classifyRisk = (value, historicalAvg) => {
 
 const importKeralaRainfallForecasts = async () => {
   try {
-    // Drop old index if it exists (year_1_season_1) - this conflicts with new district-based schema
+    // Drop old indexes if they exist
     try {
       const indexes = await RainfallForecast.collection.indexes();
-      const oldIndex = indexes.find(idx => idx.name === 'year_1_season_1' || 
-        (idx.key && idx.key.year === 1 && idx.key.season === 1 && !idx.key.district));
+      const oldIndexes = indexes.filter(idx => 
+        idx.name === 'year_1_season_1' || 
+        idx.name === 'year_1_district_1_season_1' ||
+        (idx.key && idx.key.year === 1 && idx.key.season === 1 && !idx.key.month)
+      );
       
-      if (oldIndex) {
-        await RainfallForecast.collection.dropIndex(oldIndex.name);
-        console.log(`🗑️  Dropped old index: ${oldIndex.name}`);
+      for (const oldIndex of oldIndexes) {
+        try {
+          await RainfallForecast.collection.dropIndex(oldIndex.name);
+          console.log(`🗑️  Dropped old index: ${oldIndex.name}`);
+        } catch (err) {
+          // Index might not exist, that's okay
+        }
       }
     } catch (err) {
       // Index might not exist, that's okay
       if (err.code !== 27 && err.codeName !== 'IndexNotFound' && !err.message.includes('index not found')) {
-        console.log('⚠️  Could not drop old index (may not exist):', err.message);
+        console.log('⚠️  Could not drop old indexes (may not exist):', err.message);
       }
     }
 
@@ -111,10 +141,10 @@ const importKeralaRainfallForecasts = async () => {
     const deleteResult = await RainfallForecast.deleteMany({});
     console.log(`🗑️  Cleared ${deleteResult.deletedCount} old forecast documents`);
 
-    // Ensure the new index exists (year_1_district_1_season_1)
+    // Ensure the new index exists (year_1_district_1_month_1)
     try {
-      await RainfallForecast.collection.createIndex({ year: 1, district: 1, season: 1 }, { unique: true });
-      console.log('✅ Created new index (year_1_district_1_season_1)');
+      await RainfallForecast.collection.createIndex({ year: 1, district: 1, month: 1 }, { unique: true });
+      console.log('✅ Created new index (year_1_district_1_month_1)');
     } catch (err) {
       console.log('⚠️  Index may already exist:', err.message);
     }
@@ -127,56 +157,89 @@ const importKeralaRainfallForecasts = async () => {
       return;
     }
     
-    const historicalAvg = computeHistoricalAverage(records);
     const districtRatios = calculateDistrictRatios();
-    
-    console.log(`📊 Historical average Kerala monsoon rainfall (JJAS): ${historicalAvg.toFixed(2)} mm`);
     console.log(`📊 District ratios calculated for ${Object.keys(districtRatios).length} districts`);
     
-    // Generate forecasts for future years (2023-2026) using average of last 5 years
-    const lastHistoricalYear = Math.max(...records.map(r => r.year));
-    const recentYears = records.filter(r => r.year > lastHistoricalYear - 5);
-    const recentAvg = computeHistoricalAverage(recentYears);
+    // Calculate each district's historical average per month (from historical records only)
+    const historicalRecords = records.filter(r => !r.isForecast);
+    const districtMonthlyAverages = {}; // { district: { 1: avg, 2: avg, ... } }
+    
+    for (const [district, ratio] of Object.entries(districtRatios)) {
+      districtMonthlyAverages[district] = {};
+      for (let month = 1; month <= 12; month++) {
+        const keralaMonthlyAvg = computeMonthlyHistoricalAverage(historicalRecords, month);
+        const districtMonthlyAvg = keralaMonthlyAvg * ratio;
+        districtMonthlyAverages[district][month] = districtMonthlyAvg;
+      }
+      console.log(`   ${district}: Monthly averages calculated`);
+    }
+    
+    // Generate forecasts for future years (2023-2026) using average of last 5 years per month
+    const lastHistoricalYear = Math.max(...historicalRecords.map(r => r.year));
+    const recentYears = historicalRecords.filter(r => r.year > lastHistoricalYear - 5);
     
     const futureYears = [2023, 2024, 2025, 2026];
+    const forecastRecords = [];
+    
     futureYears.forEach(year => {
       if (year > lastHistoricalYear) {
-        records.push({ year, jjas: recentAvg, isForecast: true });
+        const forecastMonthlyData = {};
+        for (let month = 1; month <= 12; month++) {
+          const recentAvg = computeMonthlyHistoricalAverage(recentYears, month);
+          forecastMonthlyData[month] = recentAvg;
+        }
+        forecastRecords.push({ year, monthlyData: forecastMonthlyData, isForecast: true });
       }
     });
     
+    const allRecords = [...records, ...forecastRecords];
     const bulkOps = [];
     
-    // Process each year
-    for (const record of records) {
-      const keralaMonsoonRainfall = record.jjas;
+    // Process each year and month
+    for (const record of allRecords) {
       const isForecast = record.isForecast || false;
       
-      // Split Kerala rainfall across districts using ratios
-      for (const [district, ratio] of Object.entries(districtRatios)) {
-        const districtRainfall = keralaMonsoonRainfall * ratio;
-        const roundedRainfall = Number(districtRainfall.toFixed(2));
-        const riskLevel = classifyRisk(districtRainfall, historicalAvg * ratio);
+      // Process each month (1-12)
+      for (let month = 1; month <= 12; month++) {
+        const keralaMonthlyRainfall = record.monthlyData[month];
+        if (keralaMonthlyRainfall === undefined || Number.isNaN(keralaMonthlyRainfall)) continue;
         
-        const doc = {
-          year: record.year,
-          district,
-          season: 'Monsoon',
-          months: ['June', 'July', 'August', 'September'],
-          predictedRainfall: roundedRainfall,
-          riskLevel,
-          model: 'SARIMA',
-          isForecast,
-          createdAt: new Date()
-        };
+        // Determine season based on month
+        let season = 'Summer';
+        if ([6, 7, 8, 9].includes(month)) season = 'Monsoon';
+        else if ([10, 11].includes(month)) season = 'Post-monsoon';
+        else if ([12, 1, 2].includes(month)) season = 'Winter';
         
-        bulkOps.push({
-          updateOne: {
-            filter: { year: record.year, district, season: 'Monsoon' },
-            update: { $set: doc },
-            upsert: true
-          }
-        });
+        // Split Kerala monthly rainfall across districts using ratios
+        for (const [district, ratio] of Object.entries(districtRatios)) {
+          const districtMonthlyRainfall = keralaMonthlyRainfall * ratio;
+          const roundedRainfall = Number(districtMonthlyRainfall.toFixed(2));
+          
+          // Use district's own monthly historical average for risk classification
+          const districtMonthlyAvg = districtMonthlyAverages[district][month];
+          const riskLevel = classifyRisk(districtMonthlyRainfall, districtMonthlyAvg);
+          
+          const doc = {
+            year: record.year,
+            district,
+            month,
+            monthName: MONTH_NAMES[month - 1],
+            season,
+            predictedRainfall: roundedRainfall,
+            riskLevel,
+            model: 'SARIMA',
+            isForecast,
+            createdAt: new Date()
+          };
+          
+          bulkOps.push({
+            updateOne: {
+              filter: { year: record.year, district, month },
+              update: { $set: doc },
+              upsert: true
+            }
+          });
+        }
       }
     }
     

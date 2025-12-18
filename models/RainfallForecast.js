@@ -10,13 +10,17 @@ const rainfallForecastSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    month: {
+      type: Number, // 1-12 for January-December
+      required: true
+    },
+    monthName: {
+      type: String, // "January", "February", etc.
+      required: true
+    },
     season: {
       type: String,
       default: 'Monsoon'
-    },
-    months: {
-      type: [String],
-      default: ['June', 'July', 'August', 'September']
     },
     predictedRainfall: {
       type: Number,
@@ -45,8 +49,8 @@ const rainfallForecastSchema = new mongoose.Schema(
   }
 );
 
-// Ensure one document per year, district & season
-rainfallForecastSchema.index({ year: 1, district: 1, season: 1 }, { unique: true });
+// Ensure one document per year, district & month
+rainfallForecastSchema.index({ year: 1, district: 1, month: 1 }, { unique: true });
 
 module.exports = mongoose.model('RainfallForecast', rainfallForecastSchema);
 
