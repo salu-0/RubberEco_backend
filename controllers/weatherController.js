@@ -257,6 +257,27 @@ exports.getDistrictForecast = async (req, res) => {
 
     series.sort((a, b) => a.year - b.year);
 
+    // Get all districts' forecasts for the selected month and year (for map display)
+    const allDistrictsForecasts = await RainfallForecast.find({
+      year: forecastYear,
+      month: monthNum
+    }).lean();
+
+    // If no forecasts for target year, use latest available year
+    let districtsForMap = allDistrictsForecasts;
+    if (!districtsForMap || districtsForMap.length === 0) {
+      const latestYear = await RainfallForecast.findOne({ month: monthNum })
+        .sort({ year: -1 })
+        .lean();
+      
+      if (latestYear) {
+        districtsForMap = await RainfallForecast.find({
+          year: latestYear.year,
+          month: monthNum
+        }).lean();
+      }
+    }
+
     return res.json({
       year: forecastYear,
       month: monthNum,
@@ -270,7 +291,13 @@ exports.getDistrictForecast = async (req, res) => {
       isForecast: !!forecast.isForecast,
       historicalAverage,
       percentOfAverage,
-      series
+      series,
+      allDistricts: districtsForMap.map(doc => ({
+        district: doc.district,
+        predictedRainfall: doc.predictedRainfall,
+        riskLevel: doc.riskLevel,
+        monthName: doc.monthName
+      }))
     });
   } catch (error) {
     console.error('Error fetching district forecast:', error);
