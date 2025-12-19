@@ -278,6 +278,30 @@ exports.getDistrictForecast = async (req, res) => {
       }
     }
 
+    // For map colours, we want relative wet/dry across districts for THIS month,
+    // even though the underlying model only has state‑level anomalies.
+    // So we derive a "relativeRiskLevel" by ranking districts by rainfall.
+    let mapRiskByDistrict = {};
+    if (districtsForMap && districtsForMap.length > 0) {
+      const sorted = [...districtsForMap].sort(
+        (a, b) => (b.predictedRainfall || 0) - (a.predictedRainfall || 0)
+      );
+
+      const n = sorted.length;
+      const highCount = Math.max(3, Math.round(n * 0.3)); // top ~30% as High
+      const lowCount = Math.max(3, Math.round(n * 0.3));  // bottom ~30% as Low
+
+      sorted.forEach((doc, idx) => {
+        let level = 'Normal';
+        if (idx < highCount) {
+          level = 'High';
+        } else if (idx >= n - lowCount) {
+          level = 'Low';
+        }
+        mapRiskByDistrict[doc.district] = level;
+      });
+    }
+
     return res.json({
       year: forecastYear,
       month: monthNum,
@@ -295,7 +319,9 @@ exports.getDistrictForecast = async (req, res) => {
       allDistricts: districtsForMap.map(doc => ({
         district: doc.district,
         predictedRainfall: doc.predictedRainfall,
-        riskLevel: doc.riskLevel,
+        // Use relative risk for the map so different districts can have
+        // different colours even when the state‑level anomaly is the same.
+        riskLevel: mapRiskByDistrict[doc.district] || doc.riskLevel,
         monthName: doc.monthName
       }))
     });
