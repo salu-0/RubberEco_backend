@@ -1,0 +1,16 @@
+district_id,district_name,district_name_ml,headquarters,area_sq_km,region,rubber_zone,avg_annual_rainfall_mm,latitude,longitude
+1,Thiruvananthapuram,തിരുവനന്തപുരം,Thiruvananthapuram,2192,South Kerala,true,1827,8.5241,76.9366
+2,Kollam,കൊല്ലം,Kollam,2491,South Kerala,true,2454,8.8932,76.6141
+3,Pathanamthitta,പത്തനംതിട്ട,Pathanamthitta,2637,South Kerala,true,2924,9.2648,76.787
+4,Alappuzha,ആലപ്പുഴ,Alappuzha,1414,Central Kerala,false,2763,9.4981,76.3388
+5,Kottayam,കോട്ടയം,Kottayam,2208,Central Kerala,true,3194,9.5916,76.5222
+6,Idukki,ഇടുക്കി,Painavu,4358,Central Kerala,true,3438,9.9189,77.1025
+7,Ernakulam,എറണാകുളം,Kochi,3068,Central Kerala,true,3182,9.9816,76.2999
+8,Thrissur,തൃശ്ശൂർ,Thrissur,3032,Central Kerala,true,3062,10.5276,76.2144
+9,Palakkad,പാലക്കാട്,Palakkad,4480,North Kerala,true,2104,10.7867,76.6548
+10,Malappuram,മലപ്പുറം,Malappuram,3550,North Kerala,true,2897,11.051,76.0711
+11,Kozhikode,കോഴിക്കോട്,Kozhikode,2344,North Kerala,true,3266,11.2588,75.7804
+12,Wayanad,വയനാട്,Kalpetta,2131,North Kerala,true,2322,11.6854,76.132
+13,Kannur,കണ്ണൂർ,Kannur,2966,North Kerala,true,3438,11.8745,75.3704
+14,Kasaragod,കാസർഗോഡ്,Kasaragod,1992,North Kerala,true,3587,12.4996,74.9869
+

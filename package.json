@@ -9,8 +9,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "update-nursery-plants": "node scripts/updateNurseryPlants.js",
-    "import-rainfall-forecasts": "node scripts/importRainfallForecasts.js",
-    "import-kerala-rainfall": "node scripts/importKeralaRainfallForecasts.js"
+    "import-rainfall-forecasts": "node scripts/importRainfallForecasts.js"
   },
   "keywords": [],
   "author": "",

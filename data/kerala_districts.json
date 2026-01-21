@@ -1,0 +1,229 @@
+{
+  "state": "Kerala",
+  "country": "India",
+  "total_districts": 14,
+  "districts": [
+    {
+      "id": 1,
+      "name": "Thiruvananthapuram",
+      "name_ml": "തിരുവനന്തപുരം",
+      "headquarters": "Thiruvananthapuram",
+      "area_sq_km": 2192,
+      "region": "South Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 1827,
+      "coordinates": {
+        "latitude": 8.5241,
+        "longitude": 76.9366
+      }
+    },
+    {
+      "id": 2,
+      "name": "Kollam",
+      "name_ml": "കൊല്ലം",
+      "headquarters": "Kollam",
+      "area_sq_km": 2491,
+      "region": "South Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 2454,
+      "coordinates": {
+        "latitude": 8.8932,
+        "longitude": 76.6141
+      }
+    },
+    {
+      "id": 3,
+      "name": "Pathanamthitta",
+      "name_ml": "പത്തനംതിട്ട",
+      "headquarters": "Pathanamthitta",
+      "area_sq_km": 2637,
+      "region": "South Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 2924,
+      "coordinates": {
+        "latitude": 9.2648,
+        "longitude": 76.7870
+      }
+    },
+    {
+      "id": 4,
+      "name": "Alappuzha",
+      "name_ml": "ആലപ്പുഴ",
+      "headquarters": "Alappuzha",
+      "area_sq_km": 1414,
+      "region": "Central Kerala",
+      "rubber_zone": false,
+      "avg_annual_rainfall_mm": 2763,
+      "coordinates": {
+        "latitude": 9.4981,
+        "longitude": 76.3388
+      }
+    },
+    {
+      "id": 5,
+      "name": "Kottayam",
+      "name_ml": "കോട്ടയം",
+      "headquarters": "Kottayam",
+      "area_sq_km": 2208,
+      "region": "Central Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3194,
+      "coordinates": {
+        "latitude": 9.5916,
+        "longitude": 76.5222
+      }
+    },
+    {
+      "id": 6,
+      "name": "Idukki",
+      "name_ml": "ഇടുക്കി",
+      "headquarters": "Painavu",
+      "area_sq_km": 4358,
+      "region": "Central Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3438,
+      "coordinates": {
+        "latitude": 9.9189,
+        "longitude": 77.1025
+      }
+    },
+    {
+      "id": 7,
+      "name": "Ernakulam",
+      "name_ml": "എറണാകുളം",
+      "headquarters": "Kochi",
+      "area_sq_km": 3068,
+      "region": "Central Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3182,
+      "coordinates": {
+        "latitude": 9.9816,
+        "longitude": 76.2999
+      }
+    },
+    {
+      "id": 8,
+      "name": "Thrissur",
+      "name_ml": "തൃശ്ശൂർ",
+      "headquarters": "Thrissur",
+      "area_sq_km": 3032,
+      "region": "Central Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3062,
+      "coordinates": {
+        "latitude": 10.5276,
+        "longitude": 76.2144
+      }
+    },
+    {
+      "id": 9,
+      "name": "Palakkad",
+      "name_ml": "പാലക്കാട്",
+      "headquarters": "Palakkad",
+      "area_sq_km": 4480,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 2104,
+      "coordinates": {
+        "latitude": 10.7867,
+        "longitude": 76.6548
+      }
+    },
+    {
+      "id": 10,
+      "name": "Malappuram",
+      "name_ml": "മലപ്പുറം",
+      "headquarters": "Malappuram",
+      "area_sq_km": 3550,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 2897,
+      "coordinates": {
+        "latitude": 11.0510,
+        "longitude": 76.0711
+      }
+    },
+    {
+      "id": 11,
+      "name": "Kozhikode",
+      "name_ml": "കോഴിക്കോട്",
+      "headquarters": "Kozhikode",
+      "area_sq_km": 2344,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3266,
+      "coordinates": {
+        "latitude": 11.2588,
+        "longitude": 75.7804
+      }
+    },
+    {
+      "id": 12,
+      "name": "Wayanad",
+      "name_ml": "വയനാട്",
+      "headquarters": "Kalpetta",
+      "area_sq_km": 2131,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 2322,
+      "coordinates": {
+        "latitude": 11.6854,
+        "longitude": 76.1320
+      }
+    },
+    {
+      "id": 13,
+      "name": "Kannur",
+      "name_ml": "കണ്ണൂർ",
+      "headquarters": "Kannur",
+      "area_sq_km": 2966,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3438,
+      "coordinates": {
+        "latitude": 11.8745,
+        "longitude": 75.3704
+      }
+    },
+    {
+      "id": 14,
+      "name": "Kasaragod",
+      "name_ml": "കാസർഗോഡ്",
+      "headquarters": "Kasaragod",
+      "area_sq_km": 1992,
+      "region": "North Kerala",
+      "rubber_zone": true,
+      "avg_annual_rainfall_mm": 3587,
+      "coordinates": {
+        "latitude": 12.4996,
+        "longitude": 74.9869
+      }
+    }
+  ],
+  "regions": {
+    "South Kerala": ["Thiruvananthapuram", "Kollam", "Pathanamthitta"],
+    "Central Kerala": ["Alappuzha", "Kottayam", "Idukki", "Ernakulam", "Thrissur"],
+    "North Kerala": ["Palakkad", "Malappuram", "Kozhikode", "Wayanad", "Kannur", "Kasaragod"]
+  },
+  "rubber_belt_districts": [
+    "Kottayam",
+    "Idukki", 
+    "Ernakulam",
+    "Thrissur",
+    "Palakkad",
+    "Kozhikode",
+    "Kannur",
+    "Kasaragod",
+    "Pathanamthitta",
+    "Kollam",
+    "Thiruvananthapuram",
+    "Malappuram",
+    "Wayanad"
+  ],
+  "metadata": {
+    "source": "Census of India, Kerala State Planning Board",
+    "last_updated": "2024",
+    "note": "Rubber zone indicates districts with significant rubber cultivation"
+  }
+}
+
