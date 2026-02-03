@@ -18,6 +18,7 @@ require('./models/NurseryAdmin');
 require('./models/Shipment');
 require('./models/Payment');
 require('./models/Message');
+require('./models/PriceForecast');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const staffRoutes = require('./routes/staffRoutes');
@@ -42,6 +43,7 @@ const attendanceRoutes = require('./routes/attendance');
 const nurseryAdminRoutes = require('./routes/nurseryAdminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const weatherRoutes = require('./routes/weather');
+const priceForecastRoutes = require('./routes/priceForecast');
 const BidAlert = require('./models/BidAlert');
 const Bid = require('./models/Bid');
 const TreeLot = require('./models/TreeLot');
@@ -254,6 +256,9 @@ app.use('/api/orders', orderRoutes);
 
 // Weather routes (farmer weather insights)
 app.use('/api/weather', weatherRoutes);
+
+// Price forecast routes (market price predictions)
+app.use('/api/price-forecast', priceForecastRoutes);
 
 // Admin payments routes
 const adminPaymentsRoutes = require('./routes/adminPayments');
