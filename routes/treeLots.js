@@ -9,15 +9,15 @@ const { protect, authorize } = require('../middlewares/auth');
 // @access  Public
 router.get('/', async (req, res) => {
   try {
-    const { 
-      search, 
-      minPrice, 
-      maxPrice, 
-      location, 
-      minTrees, 
+    const {
+      search,
+      minPrice,
+      maxPrice,
+      location,
+      minTrees,
       sortBy = 'newest',
       page = 1,
-      limit = 10 
+      limit = 10
     } = req.query;
 
     // Build query
@@ -81,14 +81,14 @@ router.get('/', async (req, res) => {
     // Get current highest bid for each lot
     const lotsWithBids = await Promise.all(
       treeLots.map(async (lot) => {
-        const highestBid = await Bid.findOne({ 
-          lotId: lot.lotId, 
-          status: 'active' 
+        const highestBid = await Bid.findOne({
+          lotId: lot.lotId,
+          status: 'active'
         }).sort({ amount: -1 });
 
-        const bidCount = await Bid.countDocuments({ 
-          lotId: lot.lotId, 
-          status: 'active' 
+        const bidCount = await Bid.countDocuments({
+          lotId: lot.lotId,
+          status: 'active'
         });
 
         return {
@@ -132,14 +132,14 @@ router.get('/farmer', protect, async (req, res) => {
     // Get bid information for each lot
     const lotsWithBids = await Promise.all(
       treeLots.map(async (lot) => {
-        const highestBid = await Bid.findOne({ 
-          lotId: lot.lotId, 
-          status: 'active' 
+        const highestBid = await Bid.findOne({
+          lotId: lot.lotId,
+          status: 'active'
         }).sort({ amount: -1 });
 
-        const bidCount = await Bid.countDocuments({ 
-          lotId: lot.lotId, 
-          status: 'active' 
+        const bidCount = await Bid.countDocuments({
+          lotId: lot.lotId,
+          status: 'active'
         });
 
         return {
@@ -173,11 +173,11 @@ router.get('/:id', async (req, res) => {
     // Support either Mongo _id or human lotId like RT002
     const treeLot = (id && id.length === 24)
       ? await TreeLot.findById(id)
-          .populate('farmerId', 'name email phone')
-          .lean()
+        .populate('farmerId', 'name email phone')
+        .lean()
       : await TreeLot.findOne({ lotId: id })
-      .populate('farmerId', 'name email phone')
-      .lean();
+        .populate('farmerId', 'name email phone')
+        .lean();
 
     if (!treeLot) {
       return res.status(404).json({
@@ -188,13 +188,13 @@ router.get('/:id', async (req, res) => {
 
     // Get bidding history
     const effectiveLotId = treeLot.lotId || (treeLot._id && treeLot._id.toString());
-    const bids = await Bid.find({ 
-      lotId: effectiveLotId, 
-      status: 'active' 
+    const bids = await Bid.find({
+      lotId: effectiveLotId,
+      status: 'active'
     })
-    .sort({ amount: -1 })
-    .populate('bidderId', 'name')
-    .lean();
+      .sort({ amount: -1 })
+      .populate('bidderId', 'name')
+      .lean();
 
     // Get current highest bid
     const currentHighestBid = bids.length > 0 ? bids[0].amount : treeLot.minimumPrice;
@@ -293,7 +293,7 @@ router.post('/', protect, async (req, res) => {
   try {
     console.log('🌳 Creating new tree lot...');
     console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
-    
+
     const {
       location,
       numberOfTrees,
@@ -325,6 +325,10 @@ router.post('/', protect, async (req, res) => {
     const lotId = `RT${String(lotCount + 1).padStart(3, '0')}`;
 
     // Build the tree lot object with only defined fields
+    // Set biddingEndDate to end of day (23:59:59) to avoid validation issues
+    const endDate = new Date(biddingEndDate);
+    endDate.setHours(23, 59, 59, 999);
+
     const treeLotData = {
       lotId,
       farmerId: req.user.id,
@@ -334,7 +338,7 @@ router.post('/', protect, async (req, res) => {
       minimumPrice: parseInt(minimumPrice),
       description: description || '',
       images: images || [],
-      biddingEndDate: new Date(biddingEndDate),
+      biddingEndDate: endDate,
       status: 'active'
     };
 
@@ -360,7 +364,7 @@ router.post('/', protect, async (req, res) => {
     if (tags && tags.length > 0) {
       treeLotData.tags = tags;
     }
-    
+
     // Always include accessibility object
     if (accessibility) {
       treeLotData.accessibility = {
@@ -377,11 +381,11 @@ router.post('/', protect, async (req, res) => {
     }
 
     console.log('💾 Final tree lot data to save:', JSON.stringify(treeLotData, null, 2));
-    
+
     const treeLot = new TreeLot(treeLotData);
 
     await treeLot.save();
-    
+
     console.log('✅ Tree lot saved successfully with ID:', treeLot._id);
 
     res.status(201).json({
@@ -422,9 +426,9 @@ router.put('/:id', protect, async (req, res) => {
     }
 
     // Check if there are active bids
-    const activeBids = await Bid.countDocuments({ 
-      lotId: req.params.id, 
-      status: 'active' 
+    const activeBids = await Bid.countDocuments({
+      lotId: req.params.id,
+      status: 'active'
     });
 
     if (activeBids > 0) {
@@ -483,9 +487,9 @@ router.delete('/:id', protect, async (req, res) => {
     }
 
     // Check if there are active bids
-    const activeBids = await Bid.countDocuments({ 
-      lotId: req.params.id, 
-      status: 'active' 
+    const activeBids = await Bid.countDocuments({
+      lotId: req.params.id,
+      status: 'active'
     });
 
     if (activeBids > 0) {
