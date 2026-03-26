@@ -1,0 +1,23 @@
+{
+  "method": "rolling_one_step_ahead",
+  "market": "Kottayam",
+  "grade": "RSS-4",
+  "order": [
+    1,
+    1,
+    1
+  ],
+  "seasonal_order": [
+    1,
+    1,
+    1,
+    12
+  ],
+  "min_train_months": 36,
+  "n_test": 85,
+  "rmse": 5.826851918624604,
+  "mae": 4.500791775845851,
+  "mape": 3.0741722483353544,
+  "accuracy_proxy_pct": 96.92582775166464,
+  "mean_actual_price": 154.74
+}

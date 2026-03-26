@@ -37,6 +37,20 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def classify_price_trend(current: float, prev: float, threshold_pct: float = 2.0) -> str:
+    """
+    Month-over-month trend label (same ±2% rule as the app forecast copy).
+    """
+    if prev is None or prev == 0:
+        return 'Stable'
+    change_pct = ((current - prev) / prev) * 100
+    if change_pct > threshold_pct:
+        return 'Rising'
+    if change_pct < -threshold_pct:
+        return 'Falling'
+    return 'Stable'
+
+
 # Rubber grades
 RUBBER_GRADES = ['RSS-4', 'RSS-3', 'RSS-5', 'ISNR-20', 'Latex']
 
@@ -45,6 +59,20 @@ KERALA_MARKETS = [
     'Kottayam', 'Changanacherry', 'Manimala', 'Thrissur',
     'Kozhikode', 'Palakkad', 'Ernakulam'
 ]
+
+
+def classify_price_trend(price: float, prev_price: float) -> str:
+    """
+    Rising / Falling / Stable vs previous month (±2% threshold), matching dashboard logic.
+    """
+    if prev_price is None or prev_price == 0:
+        return 'Stable'
+    change_pct = ((price - prev_price) / prev_price) * 100
+    if change_pct > 2:
+        return 'Rising'
+    if change_pct < -2:
+        return 'Falling'
+    return 'Stable'
 
 
 class RubberPriceSARIMA:
@@ -78,11 +106,18 @@ class RubberPriceSARIMA:
         
         df = pd.read_csv(csv_path)
         
+        # Filter by market (one monthly series per market × grade)
+        if self.market and 'MARKET' in df.columns:
+            df = df[df['MARKET'] == self.market]
+        
         # Filter by grade if specified
         if self.grade and 'GRADE' in df.columns:
             df = df[df['GRADE'] == self.grade]
         
-        print(f"✅ Loaded {len(df)} months of data ({df['YEAR'].min()}-{df['YEAR'].max()})")
+        print(
+            f"✅ Loaded {len(df)} monthly records "
+            f"({df['YEAR'].min()}-{df['YEAR'].max()}) for {self.market} / {self.grade}"
+        )
         return df
     
     def prepare_price_data(self, df: pd.DataFrame) -> pd.Series:
@@ -194,6 +229,9 @@ class RubberPriceSARIMA:
         
         if seasonal_order is None:
             seasonal_order = self.seasonal_order or (1, 1, 1, 12)
+
+        self.order = order
+        self.seasonal_order = seasonal_order
         
         # Fit the model
         self.model = SARIMAX(
@@ -249,6 +287,130 @@ class RubberPriceSARIMA:
         
         return self.model_metadata
     
+    def evaluate_out_of_sample_rolling(
+        self,
+        series: pd.Series,
+        order: tuple = None,
+        seasonal_order: tuple = None,
+        min_train_months: int = 36,
+        include_plot_data: bool = False,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Rolling-origin one-step-ahead backtest on ``kerala_rubber_prices`` data.
+
+        For each time index t from ``min_train_months`` to n-1, fit SARIMAX on all
+        data strictly before t, forecast one month, and compare to the actual
+        price at t. This approximates real forecast accuracy (out-of-sample),
+        unlike in-sample fittedvalues from :meth:`train`.
+
+        Parameters
+        ----------
+        min_train_months : int
+            Minimum history (months) before the first test forecast. Default 36 (~3 years).
+        include_plot_data : bool
+            If True, attach ``plot_*`` arrays for visualization scripts (not for JSON export).
+        verbose : bool
+            If False, skip console metrics output (e.g. when generating charts).
+
+        Returns
+        -------
+        dict
+            rmse, mae, mape (mean abs % error), n_test. If ``include_plot_data``,
+            also ``plot_dates``, ``plot_actual``, ``plot_predicted``, ``plot_trends``
+            for seminar charts (exclude from JSON metadata).
+        """
+        if order is None:
+            order = self.order or (1, 1, 1)
+        if seasonal_order is None:
+            seasonal_order = self.seasonal_order or (1, 1, 1, 12)
+
+        y = series.sort_index().astype(float).dropna()
+        n = len(y)
+        preds = []
+        actuals = []
+        plot_dates = []
+        plot_trends = []
+
+        if verbose:
+            print(
+                f"\n📉 Rolling one-step-ahead backtest "
+                f"(min_train={min_train_months} months, order=SARIMA{order}x{seasonal_order[:3]})..."
+            )
+
+        for t in range(min_train_months, n):
+            train = y.iloc[:t]
+            try:
+                model = SARIMAX(
+                    train,
+                    order=order,
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                )
+                res = model.fit(disp=False, maxiter=400)
+                fc = res.get_forecast(steps=1)
+                pred = float(fc.predicted_mean.iloc[0])
+            except Exception:
+                continue
+
+            prev_actual = float(y.iloc[t - 1])
+            actual = float(y.iloc[t])
+            preds.append(pred)
+            actuals.append(actual)
+            if include_plot_data:
+                plot_dates.append(y.index[t])
+                plot_trends.append(classify_price_trend(actual, prev_actual))
+
+        if len(actuals) == 0:
+            return {
+                'error': 'No successful rolling forecasts; try lowering min_train_months.',
+                'n_test': 0,
+            }
+
+        actuals = np.array(actuals)
+        preds = np.array(preds)
+        mse = mean_squared_error(actuals, preds)
+        rmse = float(np.sqrt(mse))
+        mae = float(mean_absolute_error(actuals, preds))
+        mape = float(np.mean(np.abs((actuals - preds) / np.clip(actuals, 1e-8, None))) * 100)
+
+        # "Accuracy" as 100% − MAPE (common informal interpretation; capped)
+        accuracy_pct = float(max(0.0, min(100.0, 100.0 - mape)))
+
+        result = {
+            'method': 'rolling_one_step_ahead',
+            'market': self.market,
+            'grade': self.grade,
+            'order': order,
+            'seasonal_order': seasonal_order,
+            'min_train_months': min_train_months,
+            'n_test': len(actuals),
+            'rmse': rmse,
+            'mae': mae,
+            'mape': mape,
+            'accuracy_proxy_pct': accuracy_pct,
+            'mean_actual_price': float(np.mean(actuals)),
+        }
+
+        if verbose:
+            print(f"\n📊 Out-of-sample metrics (rolling 1-step ahead, n={len(actuals)}):")
+            print(f"   - RMSE: ₹{rmse:.2f}/kg")
+            print(f"   - MAE:  ₹{mae:.2f}/kg")
+            print(f"   - MAPE: {mape:.2f}%  (mean absolute percentage error)")
+            print(
+                f"   - Informal accuracy (100 − MAPE, capped): ~{accuracy_pct:.1f}% "
+                f"(use MAPE/RMSE for reporting)"
+            )
+
+        if include_plot_data:
+            result['plot_dates'] = plot_dates
+            result['plot_actual'] = actuals.tolist()
+            result['plot_predicted'] = preds.tolist()
+            result['plot_trends'] = plot_trends
+
+        return result
+
     def forecast(self, steps: int = 12, confidence_level: float = 0.95) -> pd.DataFrame:
         """
         Generate price forecasts for future months.
@@ -459,9 +621,35 @@ def main():
     # These are typical values for price time series
     order = (1, 1, 1)
     seasonal_order = (1, 1, 1, 12)
+
+    # Out-of-sample accuracy on held history (rolling one-step-ahead)
+    backtest = model.evaluate_out_of_sample_rolling(
+        series, order=order, seasonal_order=seasonal_order, min_train_months=36
+    )
+    if 'error' not in backtest:
+        bt_path = MODEL_DIR / 'rolling_backtest_metrics.json'
+        _plot_keys = frozenset({'plot_dates', 'plot_actual', 'plot_predicted', 'plot_trends'})
+        bt_save = {
+            k: v
+            for k, v in backtest.items()
+            if k not in _plot_keys
+        }
+        bt_save['order'] = list(backtest['order'])
+        bt_save['seasonal_order'] = list(backtest['seasonal_order'])
+        with open(bt_path, 'w', encoding='utf-8') as f:
+            json.dump(bt_save, f, indent=2)
+        print(f"\n💾 Rolling backtest metrics saved to: {bt_path}")
     
     # Train model
     model.train(series, order=order, seasonal_order=seasonal_order)
+
+    if 'error' not in backtest:
+        _plot_keys = frozenset({'plot_dates', 'plot_actual', 'plot_predicted', 'plot_trends'})
+        model.model_metadata['rolling_backtest_metrics'] = {
+            **{k: v for k, v in backtest.items() if k not in _plot_keys},
+            'order': list(backtest['order']),
+            'seasonal_order': list(backtest['seasonal_order']),
+        }
     
     # Generate forecasts (next 24 months)
     forecast_df = model.forecast(steps=24)

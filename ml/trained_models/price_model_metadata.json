@@ -1,0 +1,50 @@
+{
+  "market": "Kottayam",
+  "grade": "RSS-4",
+  "model_type": "SARIMA",
+  "order": [
+    1,
+    1,
+    1
+  ],
+  "seasonal_order": [
+    1,
+    1,
+    1,
+    12
+  ],
+  "aic": 581.7578424094519,
+  "bic": 594.4743163208019,
+  "training_period": "2015-01 to 2025-01",
+  "n_observations": 121,
+  "metrics": {
+    "mse": 146.12529511386762,
+    "rmse": 12.08822961040481,
+    "mae": 5.534661458484012,
+    "mape": 4.318487166417653
+  },
+  "trained_at": "2026-03-24T23:41:26.659023",
+  "rolling_backtest_metrics": {
+    "method": "rolling_one_step_ahead",
+    "market": "Kottayam",
+    "grade": "RSS-4",
+    "order": [
+      1,
+      1,
+      1
+    ],
+    "seasonal_order": [
+      1,
+      1,
+      1,
+      12
+    ],
+    "min_train_months": 36,
+    "n_test": 85,
+    "rmse": 5.826851918624604,
+    "mae": 4.500791775845851,
+    "mape": 3.0741722483353544,
+    "accuracy_proxy_pct": 96.92582775166464,
+    "mean_actual_price": 154.74
+  }
+}
