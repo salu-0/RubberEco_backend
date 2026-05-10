@@ -291,9 +291,6 @@ router.get('/:id/bidders', protect, async (req, res) => {
 // @access  Private
 router.post('/', protect, async (req, res) => {
   try {
-    console.log('🌳 Creating new tree lot...');
-    console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
-
     const {
       location,
       numberOfTrees,
@@ -320,22 +317,52 @@ router.post('/', protect, async (req, res) => {
       });
     }
 
-    // Generate lot ID
-    const lotCount = await TreeLot.countDocuments();
-    const lotId = `RT${String(lotCount + 1).padStart(3, '0')}`;
+    const parsedTrees = Number.parseInt(numberOfTrees, 10);
+    const parsedMinimumPrice = Number.parseInt(minimumPrice, 10);
+    const endDate = new Date(biddingEndDate);
+
+    if (!Number.isFinite(parsedTrees) || parsedTrees < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Number of trees must be at least 1'
+      });
+    }
+
+    if (!Number.isFinite(parsedMinimumPrice) || parsedMinimumPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum price must be a valid non-negative number'
+      });
+    }
+
+    if (Number.isNaN(endDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid bidding end date'
+      });
+    }
+
+    // Generate unique lot ID (count-based IDs can collide after deletions)
+    let lotId;
+    let tries = 0;
+    do {
+      tries += 1;
+      lotId = `RT${Date.now()}${Math.floor(Math.random() * 1000)
+        .toString()
+        .padStart(3, '0')}`;
+    } while (tries < 5 && (await TreeLot.exists({ lotId })));
 
     // Build the tree lot object with only defined fields
     // Set biddingEndDate to end of day (23:59:59) to avoid validation issues
-    const endDate = new Date(biddingEndDate);
     endDate.setHours(23, 59, 59, 999);
 
     const treeLotData = {
       lotId,
       farmerId: req.user.id,
       location,
-      numberOfTrees: parseInt(numberOfTrees),
+      numberOfTrees: parsedTrees,
       approximateYield,
-      minimumPrice: parseInt(minimumPrice),
+      minimumPrice: parsedMinimumPrice,
       description: description || '',
       images: images || [],
       biddingEndDate: endDate,
@@ -380,13 +407,9 @@ router.post('/', protect, async (req, res) => {
       };
     }
 
-    console.log('💾 Final tree lot data to save:', JSON.stringify(treeLotData, null, 2));
-
     const treeLot = new TreeLot(treeLotData);
 
     await treeLot.save();
-
-    console.log('✅ Tree lot saved successfully with ID:', treeLot._id);
 
     res.status(201).json({
       success: true,
@@ -398,7 +421,7 @@ router.post('/', protect, async (req, res) => {
     console.error('Error creating tree lot:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while creating tree lot'
+      message: error?.message || 'Server error while creating tree lot'
     });
   }
 });

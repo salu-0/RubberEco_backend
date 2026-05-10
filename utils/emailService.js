@@ -1842,6 +1842,65 @@ This is an automated message. Please do not reply to this email.
   }
 };
 
+// Send nursery booking decision email (approved/rejected)
+const sendNurseryBookingDecisionEmail = async (farmerData, bookingData, decision) => {
+  try {
+    const normalized = String(decision || '').toLowerCase();
+    if (normalized === 'approved') {
+      return await sendNurseryBookingApprovalEmail(farmerData, bookingData);
+    }
+
+    if (normalized !== 'rejected') {
+      return { success: false, message: 'Invalid decision type for nursery booking email' };
+    }
+
+    const transporter = createEmailTransporter();
+    const rejectionMessage = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Nursery Booking Update</title>
+      </head>
+      <body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f5f7fa;">
+        <div style="max-width:600px;margin:20px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.08);">
+          <div style="background:#dc2626;color:#fff;padding:24px;text-align:center;">
+            <h1 style="margin:0;font-size:24px;">Nursery Booking Update</h1>
+            <p style="margin:8px 0 0;opacity:.9;">Booking ID: ${bookingData._id}</p>
+          </div>
+          <div style="padding:24px;">
+            <p style="margin:0 0 12px;color:#111827;">Hello ${farmerData.farmerName},</p>
+            <p style="margin:0 0 16px;color:#374151;">
+              Your nursery booking for <strong>${bookingData.plantName}</strong> (${bookingData.quantity} plants) was not approved at this time.
+            </p>
+            ${bookingData.approvalNotes ? `
+            <div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px 14px;border-radius:8px;margin-bottom:16px;">
+              <strong>Notes from nursery admin:</strong>
+              <div style="margin-top:6px;color:#7c2d12;">${bookingData.approvalNotes}</div>
+            </div>` : ''}
+            <p style="margin:0 0 8px;color:#374151;">You can place a new booking request or contact the nursery for support.</p>
+            <p style="margin:0;color:#6b7280;font-size:13px;">This is an automated message from RubberEco.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const result = await transporter.sendMail({
+      from: `"RubberEco Team" <${process.env.EMAIL_USER}>`,
+      to: farmerData.farmerEmail,
+      subject: `Nursery Booking Update - ${bookingData.plantName} | RubberEco`,
+      html: rejectionMessage
+    });
+
+    return { success: true, message: 'Nursery booking rejection email sent successfully', messageId: result.messageId };
+  } catch (error) {
+    console.error('❌ Failed to send nursery booking decision email:', error);
+    return { success: false, message: 'Failed to send nursery booking decision email', error: error.message };
+  }
+};
+
 // Notify a broker when they have been outbid on a lot
 const sendOutbidNotificationEmail = async ({ lotId, previousBidderId, previousAmount, newAmount }) => {
   try {
@@ -1912,5 +1971,6 @@ module.exports = {
   createEmailTransporter,
   sendServiceRequestEmail,
   sendNurseryBookingApprovalEmail,
+  sendNurseryBookingDecisionEmail,
   sendOutbidNotificationEmail
 };

@@ -9,6 +9,7 @@ const {
   updatePlant,
   getBookings,
   updateBookingStatus,
+  decideBooking,
   getDashboardStats,
   getShipments,
   updateShipmentStatus,
@@ -34,6 +35,7 @@ router.put('/plants/:plantId', updatePlant);
 // Booking management
 router.get('/bookings', getBookings);
 router.put('/bookings/:bookingId/status', updateBookingStatus);
+router.put('/bookings/:bookingId/decision', decideBooking);
 
 // Dashboard
 router.get('/dashboard/stats', getDashboardStats);

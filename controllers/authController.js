@@ -85,8 +85,9 @@ exports.registerUser = async (req, res) => {
 
     const savedUser = await user.save();
 
-    // Create email verification token (valid for 24 hours)
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    // Create email verification OTP (valid for 24 hours)
+    // We store only the hash in DB; the plaintext OTP is sent via email.
+    const verificationToken = crypto.randomInt(100000, 1000000).toString(); // 6 digits
     const verificationTokenHash = crypto
       .createHash('sha256')
       .update(verificationToken)
@@ -97,28 +98,48 @@ exports.registerUser = async (req, res) => {
     await savedUser.save();
 
     // Send verification email (best-effort – do not block registration if email fails)
+    let otpForDev = null;
     try {
       if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
         const transporter = createEmailTransporter();
         await transporter.verify();
 
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5174';
         const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${verificationToken}`;
+        const otpVerifyPageUrl = `${frontendUrl}/verify-email-otp?email=${encodeURIComponent(savedUser.email)}`;
 
         const html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f9fafb;">
             <div style="background: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06);">
               <div style="background: linear-gradient(135deg,#22c55e,#16a34a); color: #fff; padding: 20px 24px;">
-                <h2 style="margin:0">Verify your email</h2>
+                <h2 style="margin:0">Verify your email with OTP</h2>
                 <p style="margin:6px 0 0 0; opacity:.9">Complete your RubberEco registration</p>
               </div>
               <div style="padding: 24px; color:#111827;">
                 <p>Hi ${name},</p>
                 <p>Thanks for signing up to RubberEco. Please confirm your email address to activate your account.</p>
-                <div style="text-align:center; margin: 24px 0;">
-                  <a href="${verifyUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Verify Email</a>
+
+                <p style="color:#6b7280; font-size:14px; margin-top:18px;">Your OTP code (expires in 24 hours):</p>
+                <div style="text-align:center; margin: 16px 0;">
+                  <span style="display:inline-block;font-size:28px;letter-spacing:6px;font-weight:800;color:#0f172a;background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 18px;border-radius:10px;">
+                    ${verificationToken}
+                  </span>
                 </div>
-                <p style="color:#6b7280; font-size:14px;">This link expires in 24 hours. If you didn’t create this account, you can safely ignore this email.</p>
+
+                <p style="color:#6b7280; font-size:14px;">
+                  Copy the OTP and paste it on the verification page.
+                </p>
+
+                <div style="text-align:center; margin: 24px 0;">
+                  <a href="${otpVerifyPageUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">
+                    Verify Email
+                  </a>
+                  <p style="margin:10px 0 0 0; color:#9ca3af; font-size:12px;">
+                    If the button doesn't work, you can also verify using the OTP via this link:
+                    <a href="${verifyUrl}">Verify</a>
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -131,6 +152,11 @@ exports.registerUser = async (req, res) => {
           html
         });
       }
+      else {
+        // Development fallback: allow OTP verification flow without SMTP.
+        otpForDev = verificationToken;
+        console.log('⚠️ EMAIL_USER/PASS not configured. Development OTP for:', savedUser.email, otpForDev);
+      }
     } catch (emailErr) {
       console.error('Email verification send failed:', emailErr.message);
     }
@@ -139,6 +165,7 @@ exports.registerUser = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Registration received. Please verify your email to activate your account.',
+      ...(otpForDev ? { otp: otpForDev } : {}),
       user: {
         id: savedUser._id,
         name: savedUser.name,
@@ -173,88 +200,62 @@ exports.loginUser = async (req, res) => {
 
     console.log('Login attempt for:', email);
 
-    // Check all collections and prioritize based on role
+    // Look for the email across all auth collections, but only accept the one whose password matches.
+    // This avoids a common issue where the same email exists in multiple collections.
     console.log('🔍 Checking Staff collection for:', email);
-    let staffUser = await Staff.findOne({ email }).select('+password');
-    let isStaff = false;
+    const staffUser = await Staff.findOne({ email }).select('+password');
 
     console.log('🔍 Checking Register collection for:', email);
-    let registerUser = await Register.findOne({ email }).select('+password');
+    const registerUser = await Register.findOne({ email }).select('+password');
 
     console.log('🔍 Checking User collection for:', email);
-    let userUser = await User.findOne({ email }).select('+password');
+    const userUser = await User.findOne({ email }).select('+password');
 
     console.log('🔍 Checking NurseryAdmin collection for:', email);
-    let nurseryAdmin = await NurseryAdmin.findOne({ email }).select('+password');
+    const nurseryAdmin = await NurseryAdmin.findOne({ email }).select('+password');
 
-    let user = null;
+    const tryMatch = async (candidate, userType) => {
+      if (!candidate) return null;
+      const isMatch = await bcrypt.compare(password, candidate.password);
+      console.log(`🔍 Password match result for ${userType}:`, isMatch);
+      if (!isMatch) return null;
+      return { candidate, userType, userRole: userType === 'staff' ? 'staff' : (userType === 'nursery_admin' ? 'nursery_admin' : candidate.role) };
+    };
 
-    // Prioritize based on role and collection
-    if (nurseryAdmin) {
-      console.log('✅ Found nursery admin in NurseryAdmin collection:', nurseryAdmin.name);
-      user = nurseryAdmin;
-      isStaff = false;
-    } else if (userUser && userUser.role === 'broker') {
-      console.log('✅ Found broker user in User collection:', userUser.name);
-      user = userUser;
-      isStaff = false;
-    } else if (staffUser) {
-      console.log('✅ Found user in Staff collection:', staffUser.name);
-      user = staffUser;
-      isStaff = true;
-    } else if (registerUser) {
-      console.log('✅ Found user in Register collection:', registerUser.name);
-      user = registerUser;
-      isStaff = false;
-    } else if (userUser) {
-      console.log('✅ Found user in User collection:', userUser.name);
-      user = userUser;
-      isStaff = false;
-    } else {
-      console.log('❌ User not found in any collection');
-    }
+    // Try in a stable order but accept the first *password-matching* candidate.
+    const matched =
+      (await tryMatch(nurseryAdmin, 'nursery_admin')) ||
+      (await tryMatch(staffUser, 'staff')) ||
+      (await tryMatch(registerUser, 'register')) ||
+      (await tryMatch(userUser, 'user'));
 
-    if (!user) {
-      console.log('❌ User not found in any collection');
+    if (!matched) {
+      console.log('❌ Password does not match any account');
       return sendErrorResponse(res, 401, 'Invalid credentials');
     }
 
-    // Verify password
-    console.log('🔍 Comparing password for user:', user.name);
-    console.log('🔍 Password provided:', password);
-    console.log('🔍 Hashed password exists:', !!user.password);
-    const isMatch = await bcrypt.compare(password, user.password);
-    console.log('🔍 Password match result:', isMatch);
-    if (!isMatch) {
-      console.log('❌ Password does not match');
-      return sendErrorResponse(res, 401, 'Invalid credentials');
-    }
-    console.log('✅ Password matches, login successful');
+    const { candidate: user, userType, userRole } = matched;
 
-    // Require email verification for non-staff accounts
-    if (!isStaff && !user.isVerified) {
+    // Require email verification for non-staff accounts.
+    if (userType !== 'staff' && !user.isVerified) {
       return sendErrorResponse(res, 403, 'Please verify your email to continue');
     }
 
-    // Generate JWT token with correct role
-    const userRole = isStaff ? 'staff' : (nurseryAdmin ? 'nursery_admin' : user.role);
     const token = generateToken(user, userRole);
 
-    // Send response without password
     const userResponse = {
       id: user._id,
       name: user.name,
       email: user.email,
       role: userRole,
-      isVerified: isStaff ? true : user.isVerified, // Staff are considered verified by default
-      ...(isStaff && {
+      isVerified: userType === 'staff' ? true : user.isVerified,
+      ...(userType === 'staff' && {
         department: user.department,
         location: user.location,
-        staffRole: user.role, // Keep the original staff role (field_officer, tapper, etc.)
-        // Check if this staff member should use staff dashboard
+        staffRole: user.role,
         useStaffDashboard: ['tapper', 'field_officer', 'supervisor', 'trainer'].includes(user.role)
       }),
-      ...(nurseryAdmin && {
+      ...(userType === 'nursery_admin' && {
         nurseryCenterId: user.nurseryCenterId,
         nurseryCenterName: user.nurseryCenterName,
         location: user.location,
@@ -326,8 +327,8 @@ exports.resendVerificationEmail = async (req, res) => {
       return sendErrorResponse(res, 400, 'Email already verified');
     }
 
-    // Generate new token
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    // Generate new OTP (6 digits)
+    const verificationToken = crypto.randomInt(100000, 1000000).toString(); // 6 digits
     const verificationTokenHash = crypto
       .createHash('sha256')
       .update(verificationToken)
@@ -338,7 +339,9 @@ exports.resendVerificationEmail = async (req, res) => {
 
     // Build verify URL
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5174';
     const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${verificationToken}`;
+    const otpVerifyPageUrl = `${frontendUrl}/verify-email-otp?email=${encodeURIComponent(user.email)}`;
 
     // Send email if SMTP configured, otherwise return URL for dev convenience
     try {
@@ -348,8 +351,37 @@ exports.resendVerificationEmail = async (req, res) => {
           from: process.env.EMAIL_USER,
           to: user.email,
           subject: 'Verify your email - RubberEco',
-          html: `<p>Please verify your email by clicking the link below:</p>
-                 <p><a href="${verifyUrl}">Verify Email</a></p>`
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f9fafb;">
+              <div style="background: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06);">
+                <div style="background: linear-gradient(135deg,#22c55e,#16a34a); color: #fff; padding: 20px 24px;">
+                  <h2 style="margin:0">Your RubberEco OTP</h2>
+                  <p style="margin:6px 0 0 0; opacity:.9">Verify your email address</p>
+                </div>
+                <div style="padding: 24px; color:#111827;">
+                  <p style="margin:0 0 14px 0; color:#6b7280; font-size:14px;">
+                    Use this OTP to verify your account (expires in 24 hours):
+                  </p>
+                  <div style="text-align:center; margin: 16px 0;">
+                    <span style="display:inline-block;font-size:28px;letter-spacing:6px;font-weight:800;color:#0f172a;background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 18px;border-radius:10px;">
+                      ${verificationToken}
+                    </span>
+                  </div>
+                  <p style="color:#6b7280; font-size:14px; margin: 0 0 18px 0;">
+                    Copy and paste the OTP into the verification page.
+                  </p>
+                  <div style="text-align:center;">
+                    <a href="${otpVerifyPageUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">
+                      Verify Email
+                    </a>
+                  </div>
+                  <p style="margin:14px 0 0 0; color:#9ca3af; font-size:12px; text-align:center;">
+                    Or verify directly with this link: <a href="${verifyUrl}">Verify</a>
+                  </p>
+                </div>
+              </div>
+            </div>
+          `
         });
         console.log('📧 Verification email sent to:', user.email);
         console.log('🔗 Verification URL:', verifyUrl);
@@ -357,13 +389,14 @@ exports.resendVerificationEmail = async (req, res) => {
       } else {
         console.log('⚠️ EMAIL_USER/PASS not configured. Returning verification URL for development.');
         console.log('🔗 Verification URL:', verifyUrl);
-        return res.json({ success: true, message: 'Verification link generated (dev)', verifyUrl });
+        // In dev, return OTP so you can test the flow without SMTP.
+        return res.json({ success: true, message: 'Verification OTP generated (dev)', verifyUrl, otp: verificationToken, otpVerifyPageUrl });
       }
     } catch (emailError) {
       console.error('Resend verification email failed:', emailError.message);
       // Still provide the URL so user can proceed
       console.log('🔗 Fallback verification URL:', verifyUrl);
-      return res.status(200).json({ success: true, message: 'Unable to send email. Use the link to verify.', verifyUrl });
+      return res.status(200).json({ success: true, message: 'Unable to send email. Use the link or returned OTP to verify.', verifyUrl, otp: verificationToken });
     }
   } catch (error) {
     console.error('Resend verification error:', error);

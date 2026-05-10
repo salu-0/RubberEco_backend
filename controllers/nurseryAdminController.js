@@ -8,6 +8,7 @@ const Payment = require('../models/Payment');
 const Register = require('../models/Register');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { sendNurseryBookingDecisionEmail } = require('../utils/emailService');
 
 // Helper function to send error responses
 const sendErrorResponse = (res, statusCode, message) => {
@@ -375,7 +376,7 @@ exports.updateBookingStatus = async (req, res) => {
     const { bookingId } = req.params;
     const { status, approvalNotes } = req.body;
 
-    const admin = await NurseryAdmin.findById(new mongoose.Types.ObjectId(req.user.id));
+    const admin = await findAdminById(req.user.id);
     if (!admin) {
       return sendErrorResponse(res, 404, 'Nursery admin not found');
     }
@@ -389,15 +390,62 @@ exports.updateBookingStatus = async (req, res) => {
       return sendErrorResponse(res, 404, 'Booking not found or not authorized');
     }
 
-    const updateData = { status };
-    if (approvalNotes) updateData.approvalNotes = approvalNotes;
+    const allowedStatuses = ['pending', 'approved', 'rejected', 'cancelled', 'completed'];
+    if (!allowedStatuses.includes(status)) {
+      return sendErrorResponse(res, 400, 'Invalid booking status');
+    }
 
-    const updatedBooking = await NurseryBooking.findByIdAndUpdate(
-      bookingId,
-      updateData,
-      { new: true, runValidators: true }
-    ).populate('farmerId', 'name email phone')
-     .populate('plantId', 'name variety unitPrice');
+    const isApprove = status === 'approved';
+    const isReject = status === 'rejected';
+
+    if (isApprove) {
+      if (!booking.payment?.advancePaid) {
+        return sendErrorResponse(res, 400, 'Advance not paid yet');
+      }
+      const plant = await NurseryPlant.findById(booking.plantId);
+      if (!plant) {
+        return sendErrorResponse(res, 404, 'Plant not found');
+      }
+      if (plant.stockAvailable < booking.quantity) {
+        return sendErrorResponse(res, 400, 'Insufficient stock');
+      }
+      booking.reservedStock = booking.quantity;
+      booking.reservationExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+      plant.stockAvailable -= booking.quantity;
+      await plant.save();
+    }
+
+    // Release reserved stock if rejected after previous approval.
+    if (isReject && booking.status === 'approved' && booking.reservedStock > 0) {
+      const plant = await NurseryPlant.findById(booking.plantId);
+      if (plant) {
+        plant.stockAvailable += booking.reservedStock;
+        await plant.save();
+      }
+      booking.reservedStock = 0;
+      booking.reservationExpiresAt = undefined;
+    }
+
+    booking.status = status;
+    if (approvalNotes !== undefined) {
+      booking.approvalNotes = approvalNotes;
+    }
+    await booking.save();
+
+    const updatedBooking = await NurseryBooking.findById(bookingId)
+      .populate('farmerId', 'name email phone')
+      .populate('plantId', 'name variety unitPrice');
+
+    if (isApprove || isReject) {
+      await sendNurseryBookingDecisionEmail(
+        {
+          farmerName: updatedBooking.farmerName,
+          farmerEmail: updatedBooking.farmerEmail
+        },
+        updatedBooking,
+        isApprove ? 'approved' : 'rejected'
+      );
+    }
 
     res.status(200).json({
       success: true,
@@ -407,6 +455,26 @@ exports.updateBookingStatus = async (req, res) => {
   } catch (error) {
     console.error('Update booking status error:', error);
     sendErrorResponse(res, 500, 'Server error while updating booking status');
+  }
+};
+
+// Approve/reject booking endpoint for nursery-admin dashboard
+exports.decideBooking = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { action, notes } = req.body || {};
+    const normalizedAction = String(action || '').trim().toLowerCase();
+
+    if (!['approve', 'reject'].includes(normalizedAction)) {
+      return sendErrorResponse(res, 400, 'Invalid action');
+    }
+
+    req.body.status = normalizedAction === 'approve' ? 'approved' : 'rejected';
+    req.body.approvalNotes = notes;
+    return exports.updateBookingStatus(req, res);
+  } catch (error) {
+    console.error('Decide booking error:', error);
+    return sendErrorResponse(res, 500, 'Server error while processing booking decision');
   }
 };
 
